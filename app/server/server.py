@@ -11,6 +11,7 @@ import time
 import queue
 from datetime import datetime
 import sqlite3
+import base64
 
 # Add the parent directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -54,55 +55,74 @@ class ClientHandler(threading.Thread):
     
     def run(self):
         """Main thread method"""
+        logger.info(f"HANDLER: Thread started for client {self.address}")
         try:
+            # --- SEND WELCOME/CONFIRMATION MESSAGE ---
+            try:
+                # Example: Send a simple confirmation or server info
+                # You could define a new message type like MSG_CONNECTED_OK
+                # For simplicity, we reuse SERVER_MESSAGE for now
+                connect_ok_msg = Message(MSG_SERVER_MESSAGE, {
+                    'timestamp': datetime.now().isoformat(),
+                    'message': "Connection accepted."
+                })
+                send_message(self.socket, connect_ok_msg)
+                logger.info(f"HANDLER: Sent connection confirmation to {self.address}")
+            except Exception as send_err:
+                 logger.error(f"HANDLER: Failed to send initial confirmation to {self.address}: {send_err}", exc_info=True)
+                 self.running = False # Cannot proceed if initial send failed
+            # ------------------------------------------
+
             last_queue_check = time.time()
-            self.socket.settimeout(0.5)  # Increased timeout to reduce frequent timeouts
-            
-            # Log successful connection
-            logger.info(f"Client handler started for {self.address}")
-            
+            self.socket.settimeout(0.1)
+
+            logger.info(f"HANDLER: Entering main loop for client {self.address}")
+
             while self.running:
+                message = None
                 try:
-                    # Receive message from client
                     message = receive_message(self.socket)
-                    
+
                     if message is None:
-                        # Client disconnected
-                        logger.info(f"Client {self.address} disconnected")
+                        logger.info(f"HANDLER: Client {self.address} disconnected (receive_message returned None)")
                         self.running = False
                         break
-                    
-                    # Process message
+
                     self.process_message(message)
+
                 except socket.timeout:
-                    # No message received, just continue - this is expected behavior
                     pass
-                except ConnectionError as ce:
-                    # Connection error, client might have disconnected
-                    logger.warning(f"Connection error from client {self.address}: {ce}")
+
+                except ConnectionAbortedError:
+                    logger.warning(f"HANDLER: Connection aborted by client {self.address}.")
+                    self.running = False
+                    break
+                except ConnectionResetError:
+                    logger.warning(f"HANDLER: Connection reset by client {self.address}.")
+                    self.running = False
+                    break
+                except BrokenPipeError:
+                    logger.warning(f"HANDLER: Broken pipe for client {self.address} (likely disconnected).")
                     self.running = False
                     break
                 except Exception as e:
-                    # Other unexpected errors
-                    logger.error(f"Error receiving message from client {self.address}: {e}", exc_info=True)
-                    # Don't break on every error - only if it's a connection error
-                    if isinstance(e, (ConnectionError, ConnectionResetError, ConnectionAbortedError)):
-                        self.running = False
-                        break
-                
-                # Check if there are messages to send to the client
-                # Do this regardless of whether we received a message
+                    logger.error(f"HANDLER: Error processing/receiving message from client {self.address}: {e}", exc_info=True)
+                    time.sleep(0.1)
+
                 current_time = time.time()
-                if current_time - last_queue_check >= 0.1:  # Check every 100ms
-                    self.check_message_queue()
+                if current_time - last_queue_check >= 0.1:
+                    try:
+                        self.check_message_queue()
+                    except Exception as q_err:
+                        logger.error(f"HANDLER: Error checking/sending message queue for {self.address}: {q_err}", exc_info=True)
                     last_queue_check = current_time
-                
-                # Sleep a bit to prevent high CPU usage
-                time.sleep(0.01)
+
+            logger.info(f"HANDLER: Exited main loop for client {self.address}. Running state: {self.running}")
+
         except Exception as e:
-            logger.error(f"Error in client handler main loop for {self.address}: {e}", exc_info=True)
+            logger.error(f"HANDLER: Unhandled exception in handler main try block for {self.address}: {e}", exc_info=True)
         finally:
-            # Close connection and clean up
+            logger.info(f"HANDLER: Entering finally block for cleanup of client {self.address}. Logged in: {self.client_info is not None}")
             self.cleanup()
     
     def process_message(self, message):
@@ -117,6 +137,8 @@ class ClientHandler(threading.Thread):
             self.handle_logout()
         elif message.msg_type == MSG_QUERY:
             self.handle_query(message.data)
+        elif message.msg_type == MSG_GET_METADATA:
+            self.handle_get_metadata(message.data)
         else:
             logger.warning(f"Unknown message type from {self.address}: {message.msg_type}")
     
@@ -243,63 +265,145 @@ class ClientHandler(threading.Thread):
         if not self.client_info or not self.session_id:
             self.send_error("Query failed: not logged in")
             return
-        
-        # Extract query data
-        query_type = data.get('query_type')
-        parameters = data.get('parameters', {})
-        
-        if not query_type:
-            self.send_error("Query failed: missing query type")
+
+        # Query type is now directly in the data dictionary from the GUI
+        query_type_id = data.get('query_type') # e.g., 'query1', 'query2'
+        # The actual parameters are also directly in the data dictionary
+        parameters = data # Pass the whole dictionary as parameters
+
+        if not query_type_id:
+            self.send_error("Query failed: missing query type identifier")
             return
-        
+
         try:
-            # Log the query
+            # Log the query using the new identifier
+            # Note: parameters is the full dict from client, store as JSON string
             query_id = self.db.log_query(
                 self.client_info['id'],
                 self.session_id,
-                query_type,
-                parameters
+                query_type_id, # Log 'query1', 'query2', etc.
+                parameters # Store the raw parameters received
             )
-            
-            logger.info(f"Processing query from {self.client_info['nickname']}: {query_type}")
-            
-            # Process the query
-            result = self.data_processor.process_query(query_type, parameters)
-            
+
+            logger.info(f"Processing query {query_type_id} from {self.client_info['nickname']} with params: {parameters}")
+
+            # --- Process the query based on query_type_id ---
+            # You'll need to map 'query1', 'query2' etc. to specific logic
+            # This might involve calling new methods in DataProcessor
+            # Example structure:
+            result = {}
+            if query_type_id == 'query1':
+                 result = self.data_processor.process_query1(parameters)
+            elif query_type_id == 'query2':
+                 result = self.data_processor.process_query2(parameters)
+            elif query_type_id == 'query3':
+                 result = self.data_processor.process_query3(parameters) # This one needs plot generation
+            elif query_type_id == 'query4':
+                 result = self.data_processor.process_query4(parameters)
+            else:
+                 # Handle unknown queryX type
+                 logger.error(f"Unknown query type identifier received: {query_type_id}")
+                 self.send_error(f"Query failed: Unknown query type identifier: {query_type_id}")
+                 return
+
+            # ------------------------------------------------
+
             if result.get('status') == 'error':
-                logger.error(f"Query error: {result.get('message')}")
+                logger.error(f"Query {query_type_id} error: {result.get('message')}")
                 self.send_error(f"Query failed: {result.get('message')}")
                 return
-            
+
             # Prepare response data
             response_data = {
                 'status': STATUS_OK,
                 'query_id': query_id,
-                'query_type': query_type,
-                'title': result.get('title', 'Query Results'),
+                'query_type': query_type_id,
+                'title': result.get('title', f'{query_type_id} Results'),
                 'message': "Query successful"
             }
-            
-            # Add dataframe if present
-            if 'data' in result:
-                response_data['data'] = encode_dataframe(result['data'])
-            
-            # Add figure if present
-            if 'figure' in result:
-                response_data['figure'] = encode_figure(result['figure'])
-            
-            # Add second figure if present
-            if 'figure2' in result:
-                response_data['figure2'] = encode_figure(result['figure2'])
-            
+
+            # Add data/headers/plot if present in the result from DataProcessor
+            if 'data' in result and result['data'] is not None:
+                 try:
+                      # --- ENCODE THE DATA HERE ---
+                      response_data['data'] = encode_dataframe(result['data'])
+                      # --------------------------
+                 except Exception as enc_err:
+                      logger.error(f"Failed to encode dataframe for query {query_type_id}: {enc_err}", exc_info=True)
+                      # Send error instead if encoding fails
+                      self.send_error(f"Server error: Failed to prepare query results.")
+                      return # Stop processing this query
+
+            if 'headers' in result:
+                 response_data['headers'] = result['headers'] # Headers are usually simple lists, no encoding needed
+
+            if 'plot' in result and result['plot'] is not None: # For Query 3
+                 try:
+                      # Plot bytes should already be bytes, just base64 encode
+                      response_data['plot'] = base64.b64encode(result['plot']).decode('utf-8')
+                 except Exception as plot_enc_err:
+                      logger.error(f"Failed to encode plot for query {query_type_id}: {plot_enc_err}", exc_info=True)
+                      # Decide if to send error or just omit plot
+
             # Send response
             self.send_response(MSG_QUERY_RESULT, response_data)
-            
+
             # Log to server activity
-            self.server.log_activity(f"Query processed: {query_type} by {self.client_info['nickname']}")
+            self.server.log_activity(f"Query {query_type_id} processed for {self.client_info['nickname']}")
+
+        except AttributeError as ae:
+             logger.error(f"DataProcessor missing method for query '{query_type_id}': {ae}", exc_info=True)
+             self.send_error(f"Server error processing query: {query_type_id} method not implemented.")
         except Exception as e:
-            logger.error(f"Error processing query: {e}")
+            logger.error(f"Error processing query {query_type_id}: {e}", exc_info=True)
             self.send_error(f"Query failed: {str(e)}")
+    
+    def handle_get_metadata(self, data):
+        """Handle a metadata request from the client"""
+        if not self.client_info: # Check if logged in
+             self.send_error("Metadata request failed: not logged in")
+             return
+
+        metadata_req_type = data.get('type')
+        logger.info(f"Processing metadata request from {self.client_info['nickname']}: {metadata_req_type}")
+
+        metadata_result = None
+        try:
+            if metadata_req_type == 'areas':
+                metadata_result = self.data_processor.get_unique_areas()
+            elif metadata_req_type == 'charge_groups':
+                metadata_result = self.data_processor.get_unique_charge_groups()
+            elif metadata_req_type == 'descent_codes':
+                metadata_result = self.data_processor.get_unique_descent_codes()
+            elif metadata_req_type == 'date_range':
+                 min_date, max_date = self.data_processor.get_date_range()
+                 # Convert dates to ISO strings for JSON compatibility
+                 metadata_result = {
+                     'min_date': min_date.isoformat() if min_date else None,
+                     'max_date': max_date.isoformat() if max_date else None
+                 }
+            elif metadata_req_type == 'arrest_type_codes':
+                 metadata_result = self.data_processor.get_unique_arrest_type_codes()
+            # ---------------------
+            else:
+                self.send_error(f"Unknown metadata type requested: {metadata_req_type}")
+                return
+
+            # Send the result back (using MSG_QUERY_RESULT structure for convenience)
+            response_data = {
+                'status': STATUS_OK,
+                'metadata_type': metadata_req_type, # Let client know what data this is
+                'data': metadata_result
+            }
+            self.send_response(MSG_QUERY_RESULT, response_data)
+            logger.info(f"Sent metadata '{metadata_req_type}' to {self.client_info['nickname']}")
+
+        except AttributeError as ae:
+             logger.error(f"DataProcessor missing method for metadata '{metadata_req_type}': {ae}", exc_info=True)
+             self.send_error(f"Server error processing metadata request: {metadata_req_type} method not implemented.")
+        except Exception as e:
+            logger.error(f"Error fetching metadata '{metadata_req_type}': {e}", exc_info=True)
+            self.send_error(f"Error fetching metadata: {e}")
     
     def send_response(self, msg_type, data):
         """Send a response to the client"""

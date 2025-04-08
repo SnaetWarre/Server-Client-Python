@@ -9,6 +9,9 @@ import queue
 import time
 import logging
 from datetime import datetime
+import struct
+import json
+import base64
 
 # Add the parent directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -77,11 +80,28 @@ class Client:
             logger.info(f"Connected to server at {self.host}:{self.port}")
             return True
         except Exception as e:
-            logger.error(f"Error connecting to server: {e}")
+            logger.error(f"Error connecting to server: {e}", exc_info=True)
             
             # Notify GUI if callback is set
             if self.on_error:
                 self.on_error(f"Error connecting to server: {e}")
+            
+            # Clean up potentially partial connection
+            logger.info("Connect failed, cleaning up potentially partial connection.")
+            if self.socket:
+                try:
+                    self.socket.close()
+                except OSError: pass
+            self.socket = None
+            self.connected = False
+            self.running = False
+            
+            # Also notify GUI of failure again to ensure UI state is correct
+            if self.on_connection_status_change:
+                try:
+                    self.on_connection_status_change(False)
+                except Exception as cb_err:
+                    logger.error(f"Error in connection status callback during cleanup: {cb_err}")
             
             return False
     
@@ -114,76 +134,78 @@ class Client:
     
     def receive_messages(self):
         """Receive messages from the server in a separate thread"""
-        # Set socket timeout to prevent blocking forever
         if self.socket:
-            self.socket.settimeout(0.5)  # 0.5 second timeout
-            
+             # Temporarily disable default timeout for this check if needed,
+             # though fileno() should work regardless.
+             # original_timeout = self.socket.gettimeout()
+             # self.socket.settimeout(None)
+            pass # No need to change timeout just for fileno check
+
         consecutive_errors = 0
-        max_consecutive_errors = 5  # Allow up to 5 consecutive errors before disconnecting
-        
+        max_consecutive_errors = 5
+
         while self.running:
             try:
-                if not self.socket:
-                    logger.warning("Socket is None, stopping receiver thread")
-                    break
-                
-                # Receive message
+                # --- ADD SOCKET CHECK LOGGING HERE ---
+                socket_valid = False
+                socket_fileno = -1 # Default invalid
+                if self.socket:
+                    try:
+                        socket_fileno = self.socket.fileno() # Get OS file descriptor number
+                        if socket_fileno != -1:
+                             socket_valid = True
+                    except Exception as sock_err:
+                        logger.warning(f"RECEIVER: Error checking socket status before receive: {sock_err}")
+
+                logger.info(f"RECEIVER LOOP: Socket valid check: {socket_valid}, Fileno: {socket_fileno}. Attempting receive...")
+                if not socket_valid:
+                     logger.error("RECEIVER LOOP: Socket is invalid or None before calling receive_message. Breaking loop.")
+                     self.running = False # Ensure loop stops
+                     break # Exit loop immediately if socket is bad
+                # --- END SOCKET CHECK LOGGING ---
+
+                # Receive message - This is where the error occurs
                 message = receive_message(self.socket)
-                
+
                 if message is None:
-                    # Connection closed by server
-                    logger.warning("Connection closed by server")
-                    break
-                
+                    logger.warning("Connection closed by server (receive_message returned None)")
+                    break # Exit loop if connection closed gracefully
+
                 # Process message
                 self.process_message(message)
-                
-                # Reset error counter on successful message processing
                 consecutive_errors = 0
-                
-                # Sleep a bit to prevent high CPU usage
                 time.sleep(0.01)
+
             except socket.timeout:
-                # Timeout is expected, just continue
-                pass
-            except ConnectionError as ce:
-                logger.error(f"Connection error: {ce}")
-                consecutive_errors += 1
-                if consecutive_errors >= max_consecutive_errors:
-                    logger.error(f"Too many consecutive connection errors, disconnecting")
-                    break
-            except Exception as e:
-                logger.error(f"Error receiving messages: {e}", exc_info=True)
-                consecutive_errors += 1
-                if consecutive_errors >= max_consecutive_errors:
-                    logger.error(f"Too many consecutive errors, disconnecting")
-                    break
-                time.sleep(0.5)  # Sleep longer on error
-        
-        # Connection lost
+                pass # Expected, just continue loop
+
+            except (ConnectionError, ValueError, OSError, struct.error, json.JSONDecodeError) as e:
+                 # Catch OSError here explicitly
+                 logger.error(f"Error receiving messages: {e}", exc_info=True)
+                 consecutive_errors += 1
+                 if consecutive_errors >= max_consecutive_errors or isinstance(e, OSError) and e.errno == 9: # Break immediately on Errno 9
+                     logger.error(f"Too many errors or fatal socket error (Errno 9), disconnecting receiver loop.")
+                     break # Exit the loop on fatal errors
+                 time.sleep(0.5)
+            # No general Exception catch here to avoid hiding problems
+
+        # Connection lost or loop exited
         if self.connected:
-            logger.warning("Connection lost, disconnecting")
-            self.connected = False
-            self.logged_in = False
-            self.client_info = None
-            
-            # Notify GUI if callbacks are set
-            if self.on_connection_status_change:
-                self.on_connection_status_change(False)
-            
-            if self.on_login_status_change:
-                self.on_login_status_change(False)
-            
-            if self.on_error:
-                self.on_error("Connection lost")
-                
-            # Add message to queue
-            self.message_queue.put({
-                'type': 'error',
-                'timestamp': datetime.now().isoformat(),
-                'message': "Connection to server lost"
-            })
-    
+             logger.warning("Receiver loop finished or connection lost, disconnecting client.")
+             # Use a separate method or flag to trigger disconnect from the main thread if needed,
+             # or ensure disconnect logic here is robust.
+             # Avoid calling self.disconnect() directly from this thread if it modifies GUI elements.
+             # For now, just update status flags.
+             self.connected = False
+             self.logged_in = False
+             self.running = False # Ensure running is false
+
+             # Use the bridge to signal connection loss to the GUI thread safely
+             if self.on_connection_status_change:
+                  self.on_connection_status_change(False)
+             if self.on_error:
+                  self.on_error("Connection lost or socket error")
+
     def process_message(self, message):
         """Process a message from the server"""
         logger.info(f"Received message from server: {message.msg_type}")
@@ -322,70 +344,82 @@ class Client:
     def handle_query_result(self, data):
         """Handle query result from the server"""
         status = data.get('status')
-        
+
         if status == STATUS_OK:
             query_type = data.get('query_type')
             query_id = data.get('query_id')
             title = data.get('title', 'Query Results')
-            
-            # Process data and figures if present
+            metadata_type = data.get('metadata_type') # Check if it's metadata
+
+            # Prepare result dictionary for the GUI callback
             result = {
                 'query_type': query_type,
                 'query_id': query_id,
-                'title': title
+                'title': title,
+                'metadata_type': metadata_type, # Pass metadata type along
+                'data': None, # Initialize data as None
+                'headers': data.get('headers'), # Pass headers if they exist
+                'plot': None # Initialize plot as None
             }
-            
-            # Decode dataframe if present
-            if 'data' in data:
+
+            # --- ADJUST DECODING LOGIC ---
+            # Decode dataframe ONLY if present and is a string (encoded)
+            encoded_data = data.get('data')
+            if isinstance(encoded_data, str): # Check if it's the encoded string
                 try:
-                    result['data'] = decode_dataframe(data['data'])
+                    result['data'] = decode_dataframe(encoded_data)
+                    logger.debug("Successfully decoded dataframe.")
                 except Exception as e:
-                    logger.error(f"Error decoding dataframe: {e}")
-                    result['data'] = None
-            
-            # Decode figure if present
-            if 'figure' in data:
+                    logger.error(f"Error decoding dataframe: {e}", exc_info=True)
+                    result['data'] = None # Ensure data is None on decoding error
+                    result['error'] = f"Client error: Failed to decode results ({e})" # Add error info
+            elif encoded_data is not None:
+                 # If data exists but isn't a string, it might be metadata (list/dict)
+                 # Or an unexpected format. Assign it directly for metadata handling.
+                 logger.debug(f"Received non-string data (likely metadata or unexpected format): {type(encoded_data)}")
+                 result['data'] = encoded_data
+
+            # Decode plot if present (assuming it's base64 encoded string)
+            encoded_plot = data.get('plot')
+            if isinstance(encoded_plot, str):
                 try:
-                    result['figure'] = decode_figure(data['figure'])
+                    # Decode base64 string to bytes for display
+                    result['plot'] = base64.b64decode(encoded_plot.encode('utf-8'))
+                    logger.debug("Successfully decoded plot data.")
                 except Exception as e:
-                    logger.error(f"Error decoding figure: {e}")
-                    result['figure'] = None
-            
-            # Decode second figure if present
-            if 'figure2' in data:
-                try:
-                    result['figure2'] = decode_figure(data['figure2'])
-                except Exception as e:
-                    logger.error(f"Error decoding figure2: {e}")
-                    result['figure2'] = None
-            
+                    logger.error(f"Error decoding plot data: {e}", exc_info=True)
+                    result['plot'] = None # Ensure plot is None on error
+                    # Optionally add to error message
+                    result['error'] = result.get('error', '') + f" Client error: Failed to decode plot ({e})"
+
+            # --- END ADJUST DECODING LOGIC ---
+
             # Notify GUI if callback is set
             if self.on_query_result:
-                self.on_query_result(result)
-            
-            logger.info(f"Received query result for {query_type}")
-            
-            # Add to message queue
-            self.message_queue.put({
-                'type': 'info',
-                'timestamp': datetime.now().isoformat(),
-                'message': f"Received query result for {query_type}"
-            })
-        else:
+                self.on_query_result(result) # Pass the processed result dict
+
+            log_msg_suffix = f"for {query_type}" if query_type else f"for metadata {metadata_type}"
+            logger.info(f"Received successful query/metadata result {log_msg_suffix}")
+
+            # Add to message queue (optional)
+            # ...
+
+        else: # status != STATUS_OK
             error_message = data.get('message', 'Query failed')
-            
-            # Notify GUI if callback is set
+            result = {'error': error_message} # Ensure error is passed to GUI
+
+            # Notify GUI callback for error display
+            if self.on_query_result:
+                 self.on_query_result(result) # Pass error result to GUI handler
+
+            # Notify error callback as well
             if self.on_error:
                 self.on_error(error_message)
-            
-            logger.error(f"Query failed: {error_message}")
-            
-            # Add to message queue
-            self.message_queue.put({
-                'type': 'error',
-                'timestamp': datetime.now().isoformat(),
-                'message': f"Query failed: {error_message}"
-            })
+
+            logger.error(f"Query/Metadata failed on server: {error_message}")
+
+            # Add to message queue (optional)
+            # ...
     
     def handle_server_message(self, data):
         """Handle server message"""
@@ -504,29 +538,77 @@ class Client:
             logger.error("Failed to send logout request")
             return False
     
-    def send_query(self, query_type, parameters=None):
-        """Send a query to the server"""
+    def send_request(self, request_data):
+        """Send a generic request dictionary to the server."""
         if not self.connected:
-            logger.error("Not connected to server")
+            logger.error("Cannot send request: Not connected to server")
+            # Optionally notify GUI via on_error callback
+            if self.on_error:
+                self.on_error("Cannot send request: Not connected")
             return False
-        
-        if not self.logged_in:
-            logger.error("Not logged in")
+
+        command = request_data.get('command')
+        if not command:
+            logger.error("Cannot send request: 'command' key missing in request data")
+            if self.on_error:
+                self.on_error("Internal error: Command missing in request")
             return False
-        
-        # Create message
-        message = Message(MSG_QUERY, {
-            'query_type': query_type,
-            'parameters': parameters if parameters else {}
-        })
-        
-        # Send message
-        if send_message(self.socket, message):
-            logger.info(f"Sent query: {query_type}")
-            return True
+
+        # Determine message type based on command
+        msg_type = None
+        if command == 'query':
+            msg_type = MSG_QUERY
+            # Query requires login
+            if not self.logged_in:
+                 logger.error("Cannot send query: Not logged in")
+                 if self.on_error:
+                      self.on_error("Cannot send query: Not logged in")
+                 return False
+        elif command == 'get_metadata':
+            msg_type = MSG_GET_METADATA # Use the new constant
+            # Metadata might also require login, adjust if needed
+            if not self.logged_in:
+                 logger.error("Cannot get metadata: Not logged in")
+                 if self.on_error:
+                      self.on_error("Cannot get metadata: Not logged in")
+                 return False
+        # Add other command mappings here if needed (e.g., login, register)
+        # else if command == 'login': msg_type = MSG_LOGIN
+        # else if command == 'register': msg_type = MSG_REGISTER
         else:
-            logger.error(f"Failed to send query: {query_type}")
+            logger.error(f"Cannot send request: Unknown command '{command}'")
+            if self.on_error:
+                 self.on_error(f"Internal error: Unknown command '{command}'")
             return False
+
+        # Prepare the data payload (remove the 'command' key)
+        payload = request_data.copy()
+        del payload['command']
+
+        # Create the message
+        message = Message(msg_type, payload)
+
+        # Send the message using the existing low-level function
+        logger.info(f"Sending request: Type={msg_type}, Payload={payload}")
+        try:
+            success = send_message(self.socket, message)
+            if not success:
+                logger.error(f"Failed to send request (command: {command}) using send_message.")
+                # Trigger error callback if send fails
+                if self.on_error:
+                     self.on_error(f"Failed to send request for command '{command}'")
+                return False
+            return True
+        except Exception as e:
+             logger.error(f"Exception sending request (command: {command}): {e}", exc_info=True)
+             if self.on_error:
+                  self.on_error(f"Network error sending request: {e}")
+             # Handle potential disconnect on send error
+             self.connected = False
+             self.running = False
+             if self.on_connection_status_change:
+                  self.on_connection_status_change(False)
+             return False
     
     def get_next_message(self):
         """Get the next message from the queue"""
@@ -582,7 +664,7 @@ if __name__ == "__main__":
                             if year:
                                 params['year'] = int(year)
                         
-                        client.send_query(query_type, params)
+                        client.send_request({'command': 'query', 'query_type': query_type, 'parameters': params})
                     else:
                         print("You must be logged in to send queries")
                 elif cmd == 'x':

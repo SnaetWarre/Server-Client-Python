@@ -6,6 +6,11 @@ import socket
 import struct
 import pickle
 import base64
+import logging
+import os
+
+# Get the logger for this module
+logger = logging.getLogger(__name__) # Use module-level logger
 
 class Message:
     """
@@ -57,13 +62,13 @@ def send_message(sock, message):
         
         return True
     except socket.timeout:
-        print(f"Timeout sending message: {message.msg_type}")
+        logger.warning(f"Timeout sending message: {message.msg_type}") # Use logger
         raise
     except ConnectionError as ce:
-        print(f"Connection error sending message: {message.msg_type} - {ce}")
+        logger.error(f"Connection error sending message: {message.msg_type} - {ce}") # Use logger
         raise
     except Exception as e:
-        print(f"Error sending message: {message.msg_type} - {e}")
+        logger.error(f"Error sending message: {message.msg_type} - {e}", exc_info=True) # Use logger and add traceback
         return False
 
 
@@ -75,55 +80,92 @@ def receive_message(sock):
     - sock: socket object
     
     Returns:
-    - Message object if received successfully, None otherwise
-    - Raises socket.timeout if a timeout occurs (which should be caught by the caller)
+    - Message object if received successfully, None if connection closed gracefully
+    - Raises socket.timeout, ConnectionError, or other exceptions on error
     """
+    fileno = -1 # For logging purposes if needed
     try:
-        # Receive message length first (4 bytes, network byte order)
-        msg_len_bytes = sock.recv(4)
+        # Basic check if socket seems valid before recv
+        if sock is None:
+             raise TypeError("Invalid object (None) passed as socket to receive_message")
+        fileno = sock.fileno()
+        if fileno == -1:
+             # This case should ideally not happen if the socket object exists,
+             # but check anyway.
+             raise OSError(9, 'Bad file descriptor (-1) passed to protocol.receive_message')
+
+        # --- Receive message length (4 bytes) ---
+        # Use a reasonable timeout to avoid indefinite blocking
+        original_timeout = sock.gettimeout()
+        sock.settimeout(10.0) # 10 second timeout for reading length
+        try:
+            msg_len_bytes = sock.recv(4)
+        finally:
+            sock.settimeout(original_timeout) # Restore original timeout
+
         if not msg_len_bytes:
+            # Connection closed gracefully by peer
+            logger.info(f"PROTOCOL.RECEIVE: Connection closed gracefully by peer (socket fileno {fileno}) before length received.")
             return None
-        
+
         msg_len = struct.unpack('!I', msg_len_bytes)[0]
-        
-        # Sanity check on message size to prevent excessive memory allocation
-        if msg_len > 10 * 1024 * 1024:  # Limit to 10MB
-            print(f"Message size too large: {msg_len} bytes")
-            return None
-        
-        # Receive the message itself
+
+        # --- Sanity check on message size ---
+        MAX_MSG_SIZE = 20 * 1024 * 1024 # Increased limit to 20MB, adjust if needed
+        if msg_len > MAX_MSG_SIZE:
+            logger.error(f"PROTOCOL.RECEIVE: Message size {msg_len} bytes exceeds limit {MAX_MSG_SIZE} (socket fileno {fileno}). Closing socket.")
+            try:
+                 sock.close() # Attempt to close our end
+            except Exception as close_err:
+                 logger.warning(f"Ignoring error while closing socket after size limit exceeded: {close_err}")
+            raise ValueError(f"Received message size ({msg_len}) exceeds limit.")
+
+        # --- Receive the message body ---
         data = b''
-        while len(data) < msg_len:
-            packet = sock.recv(min(msg_len - len(data), 4096))
-            if not packet:
-                return None
-            data += packet
-        
+        bytes_received = 0
+        # Use a longer timeout for the body, proportionate to max size?
+        body_timeout = max(30.0, MAX_MSG_SIZE / (1024*1024) * 2) # e.g., 2s per MB, min 30s
+        sock.settimeout(body_timeout)
+        logger.debug(f"PROTOCOL.RECEIVE: Expecting {msg_len} bytes for message body (timeout: {body_timeout}s)...")
+        try:
+            while bytes_received < msg_len:
+                chunk_size = min(msg_len - bytes_received, 8192) # Read in larger chunks
+                packet = sock.recv(chunk_size)
+                if not packet:
+                    logger.warning(f"PROTOCOL.RECEIVE: Connection closed unexpectedly while receiving message body (received {bytes_received}/{msg_len} bytes, socket fileno {fileno}).")
+                    raise ConnectionError("Connection closed during message body reception")
+                data += packet
+                bytes_received += len(packet)
+        finally:
+            sock.settimeout(original_timeout) # Restore original timeout
+
+        logger.debug(f"PROTOCOL.RECEIVE: Received {bytes_received} bytes for message body.")
+
         # Convert bytes to JSON
         msg_json = data.decode('utf-8')
-        
+
         # Create Message object from JSON
         message = Message.from_json(msg_json)
-        
+        logger.debug(f"PROTOCOL.RECEIVE: Successfully received message type {message.msg_type} (socket fileno {fileno}).")
         return message
+
     except socket.timeout:
-        # Re-raise timeout exceptions to be handled by the caller
-        raise
-    except ConnectionError as ce:
-        # Re-raise connection errors to be handled by the caller
-        print(f"Connection error receiving message: {ce}")
-        raise
-    except json.JSONDecodeError as je:
-        print(f"JSON decode error: {je}")
-        return None
+        logger.warning(f"PROTOCOL.RECEIVE: Socket timeout during receive (socket fileno {fileno}).")
+        raise # Re-raise timeout
+    except (ConnectionError, ValueError, struct.error, json.JSONDecodeError, OSError) as e:
+        # Catch specific, expected errors and OSError
+        logger.error(f"PROTOCOL.RECEIVE: Error receiving/decoding message: {type(e).__name__} - {e} (socket fileno {fileno})")
+        raise # Re-raise these specific errors
     except Exception as e:
-        print(f"Error receiving message: {e}")
-        return None
+         # Catch any other unexpected errors
+         logger.error(f"PROTOCOL.RECEIVE: Unexpected error receiving message: {type(e).__name__} - {e} (socket fileno {fileno})", exc_info=True)
+         raise # Re-raise
 
 
 def encode_dataframe(df):
     """Encode DataFrame for transmission"""
-    return base64.b64encode(pickle.dumps(df)).decode('utf-8')
+    # Use pickle protocol 4 for potentially better performance and compatibility
+    return base64.b64encode(pickle.dumps(df, protocol=4)).decode('utf-8')
 
 
 def decode_dataframe(encoded_df):
@@ -138,19 +180,20 @@ def encode_figure(fig):
     
     # Save figure to a bytes buffer
     buf = io.BytesIO()
-    fig.savefig(buf, format='png')
+    fig.savefig(buf, format='png', dpi=100) # Added dpi for controlled size
     buf.seek(0)
     
     # Encode the buffer as base64
     encoded = base64.b64encode(buf.read()).decode('utf-8')
-    plt.close(fig)
+    plt.close(fig) # Ensure figure is closed to free memory
     return encoded
 
 
 def decode_figure(encoded_fig):
     """Decode matplotlib figure after transmission"""
     import io
-    import matplotlib.pyplot as plt
+    # No need for matplotlib here, just decode
+    # import matplotlib.pyplot as plt
     from PIL import Image
     
     # Decode the base64 string
@@ -159,6 +202,6 @@ def decode_figure(encoded_fig):
     # Create a bytes buffer
     buf = io.BytesIO(decoded)
     
-    # Open the image with PIL
+    # Open the image with PIL - GUI will handle displaying the PIL Image
     img = Image.open(buf)
     return img 

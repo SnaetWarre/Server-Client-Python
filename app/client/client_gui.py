@@ -23,10 +23,11 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTextEdit, QComboBox, QSpinBox, QGroupBox,
     QFormLayout, QSplitter, QTableWidget, QTableWidgetItem, QMessageBox,
-    QStatusBar, QScrollArea, QGridLayout, QDialog, QFileDialog, QCheckBox
+    QStatusBar, QScrollArea, QGridLayout, QDialog, QFileDialog, QCheckBox,
+    QDateEdit, QDoubleSpinBox, QStackedWidget
 )
 from PySide6.QtGui import QPixmap, QFont, QIcon, QPalette, QColor
-from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QSettings
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QSettings, QDate
 
 # Set up logging
 logging.basicConfig(
@@ -347,142 +348,264 @@ class RegisterWidget(QWidget):
 
 
 class QueryWidget(QWidget):
-    """Query widget for the client GUI"""
+    """Widget for sending queries and viewing results"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        
-        # Set up the UI
         self.setup_ui()
     
     def setup_ui(self):
-        """Set up the UI for the query widget"""
-        # Main layout
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(5, 5, 5, 5)  # Reduce margins
-        main_layout.setSpacing(5)  # Reduce spacing
+        """Set up the query UI components"""
+        layout = QVBoxLayout(self)
         
-        # Create a group box for query input
+        # Query selection and parameters group
         query_group = QGroupBox("Query Parameters")
-        query_layout = QFormLayout()
-        query_layout.setContentsMargins(5, 5, 5, 5)  # Reduce margins
-        query_layout.setSpacing(5)  # Reduce spacing
-        
-        # Query type
+        query_layout = QVBoxLayout()
+
+        # Query Type Selection
         self.query_type_combo = QComboBox()
-        self.query_type_combo.setMinimumWidth(300)  # Make the combo box wider
-        for query_type, description in QUERY_DESCRIPTIONS.items():
-            self.query_type_combo.addItem(description, query_type)
-        query_layout.addRow("Query Type:", self.query_type_combo)
-        
-        # Help text for queries
-        self.query_help_text = QTextEdit()
-        self.query_help_text.setReadOnly(True)
-        self.query_help_text.setMaximumHeight(60)  # Reduce height
-        self.query_help_text.setPlaceholderText("Select a query type to see help")
-        query_layout.addRow("Query Help:", self.query_help_text)
-        
-        # Query parameters that change based on query type
-        self.parameters_widget = QWidget()
-        self.parameters_layout = QFormLayout(self.parameters_widget)
-        self.parameters_layout.setContentsMargins(0, 0, 0, 0)  # Remove margins
-        self.parameters_layout.setSpacing(5)  # Reduce spacing
-        
-        # N parameter for top N queries
-        self.n_spinbox = QSpinBox()
-        self.n_spinbox.setRange(1, 100)
-        self.n_spinbox.setValue(10)
-        self.parameters_layout.addRow("Top N:", self.n_spinbox)
-        
-        # Year parameter for time-based queries
-        self.year_spinbox = QSpinBox()
-        self.year_spinbox.setRange(2010, 2023)
-        self.year_spinbox.setValue(2020)
-        self.year_spinbox.setSpecialValueText("All Years")
-        self.parameters_layout.addRow("Year:", self.year_spinbox)
-        
-        # Gender parameter
-        self.gender_combo = QComboBox()
-        self.gender_combo.addItem("All", "all")
-        self.gender_combo.addItem("Male", "M")
-        self.gender_combo.addItem("Female", "F")
-        self.parameters_layout.addRow("Gender:", self.gender_combo)
-        
-        # Age range parameters
-        self.min_age_spinbox = QSpinBox()
-        self.min_age_spinbox.setRange(0, 100)
-        self.min_age_spinbox.setValue(18)
-        self.parameters_layout.addRow("Min Age:", self.min_age_spinbox)
-        
-        self.max_age_spinbox = QSpinBox()
-        self.max_age_spinbox.setRange(0, 100)
-        self.max_age_spinbox.setValue(65)
-        self.parameters_layout.addRow("Max Age:", self.max_age_spinbox)
-        
-        query_layout.addRow("Parameters:", self.parameters_widget)
-        
-        # Send query button
-        self.send_query_button = QPushButton("Send Query")
-        self.send_query_button.setMinimumHeight(30)  # Make button taller for better visibility
-        query_layout.addRow("", self.send_query_button)
-        
-        # Set layout for query group
+        self.query_type_combo.addItems([
+            "1: Arrestaties per Gebied en Tijdsperiode",
+            "2: Trend van Specifieke Overtreding over Tijd",
+            "3: Demografische Analyse van Arrestaties (Graph)",
+            "4: Geografische Hotspots van Arrestaties"
+        ])
+        query_layout.addWidget(QLabel("Select Query Type:"))
+        query_layout.addWidget(self.query_type_combo)
+
+        # Parameter Stack
+        self.parameter_stack = QStackedWidget()
+        self.parameter_stack.addWidget(self._create_query1_params())
+        self.parameter_stack.addWidget(self._create_query2_params())
+        self.parameter_stack.addWidget(self._create_query3_params())
+        self.parameter_stack.addWidget(self._create_query4_params())
+        query_layout.addWidget(self.parameter_stack)
+
+        # Connect query type change to stack change
+        self.query_type_combo.currentIndexChanged.connect(self.parameter_stack.setCurrentIndex)
+
         query_group.setLayout(query_layout)
+        layout.addWidget(query_group)
+
+        # Send query button
+        self.send_query_button = QPushButton(QIcon.fromTheme("system-search"), "Send Query")
+        self.send_query_button.setFont(QFont("Arial", 10, QFont.Bold))
+        layout.addWidget(self.send_query_button)
         
-        # Add query group to main layout
-        main_layout.addWidget(query_group)
-        
-        # Results section
+        # Results area
         results_group = QGroupBox("Query Results")
         results_layout = QVBoxLayout()
-        results_layout.setContentsMargins(5, 5, 5, 5)  # Reduce margins
-        results_layout.setSpacing(5)  # Reduce spacing
         
-        # Results title
-        self.results_title = QLabel("No results yet")
-        self.results_title.setStyleSheet("font-weight: bold; font-size: 14px;")
-        results_layout.addWidget(self.results_title)
+        # Splitter for Table and Plot
+        self.results_splitter = QSplitter(Qt.Vertical)
         
-        # Create a splitter for table and figures
-        splitter = QSplitter(Qt.Vertical)
-        
-        # Table widget for data results
+        # Table for results
         self.results_table = QTableWidget()
-        self.results_table.setAlternatingRowColors(True)  # Better readability
-        splitter.addWidget(self.results_table)
+        self.results_table.setColumnCount(5) # Example column count, adjust as needed
+        self.results_table.setHorizontalHeaderLabels(["Report ID", "Date", "Area", "Charge", "Age"]) # Example headers
+        self.results_table.setAlternatingRowColors(True)
+        self.results_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.results_table.verticalHeader().setVisible(False)
+        self.results_splitter.addWidget(self.results_table)
+
+        # Placeholder for plot
+        self.plot_label = FigureLabel() # Use FigureLabel for potential enlargement
+        self.plot_label.setAlignment(Qt.AlignCenter)
+        self.plot_label.setText("Graph will be displayed here for Query 3")
+        self.plot_label.setMinimumHeight(200) # Ensure it's visible
+        self.plot_label.hide() # Initially hidden
+        self.results_splitter.addWidget(self.plot_label)
         
-        # Scroll area for figures
-        figures_scroll = QScrollArea()
-        figures_scroll.setWidgetResizable(True)
-        figures_widget = QWidget()
-        self.figures_layout = QVBoxLayout(figures_widget)
-        self.figures_layout.setContentsMargins(5, 5, 5, 5)  # Reduce margins
-        self.figures_layout.setSpacing(5)  # Reduce spacing
-        
-        # Labels for figures - use FigureLabel instead of QLabel
-        self.figure1_label = FigureLabel()
-        self.figure1_label.setAlignment(Qt.AlignCenter)
-        self.figure1_label.setText("No figure available")
-        self.figure1_label.setTitle("Figure 1")
-        self.figures_layout.addWidget(self.figure1_label)
-        
-        self.figure2_label = FigureLabel()
-        self.figure2_label.setAlignment(Qt.AlignCenter)
-        self.figure2_label.setText("No figure available")
-        self.figure2_label.setTitle("Figure 2")
-        self.figures_layout.addWidget(self.figure2_label)
-        
-        figures_scroll.setWidget(figures_widget)
-        splitter.addWidget(figures_scroll)
-        
-        # Add the splitter to the results layout
-        results_layout.addWidget(splitter)
-        
-        # Set the layout for the results group
+        results_layout.addWidget(self.results_splitter)
         results_group.setLayout(results_layout)
         
-        # Add results group to main layout
-        main_layout.addWidget(results_group)
+        layout.addWidget(results_group, 1) # Give results area more stretch factor
+
+    def _create_query1_params(self):
+        """Create parameter widget for Query 1"""
+        widget = QWidget()
+        layout = QFormLayout(widget)
+        self.q1_area_combo = QComboBox() # Placeholder - needs population
+        self.q1_area_combo.addItems(["Loading areas..."])
+        self.q1_start_date = QDateEdit(datetime.now().date())
+        self.q1_end_date = QDateEdit(datetime.now().date())
+        self.q1_min_age_spin = QSpinBox()
+        self.q1_max_age_spin = QSpinBox()
+        self.q1_min_age_spin.setRange(0, 120)
+        self.q1_max_age_spin.setRange(0, 120)
+        self.q1_max_age_spin.setValue(120)
+
+        layout.addRow("Gebied (Area Name):", self.q1_area_combo)
+        layout.addRow("Startdatum:", self.q1_start_date)
+        layout.addRow("Einddatum:", self.q1_end_date)
+        layout.addRow("Minimum Leeftijd:", self.q1_min_age_spin)
+        layout.addRow("Maximum Leeftijd:", self.q1_max_age_spin)
+        return widget
+
+    def _create_query2_params(self):
+        """Create parameter widget for Query 2"""
+        widget = QWidget()
+        layout = QFormLayout(widget)
+        self.q2_charge_combo = QComboBox() # Placeholder
+        self.q2_charge_combo.addItems(["Loading charge types..."])
+        self.q2_granularity_combo = QComboBox()
+        self.q2_granularity_combo.addItems(["Daily", "Weekly", "Monthly", "Yearly"])
+        self.q2_area_input = QLineEdit() # Simple input for now, comma-separated
+        self.q2_area_input.setPlaceholderText("Optional: Enter areas separated by commas")
+
+        layout.addRow("Arrestatietype:", self.q2_charge_combo)
+        layout.addRow("Tijdsgranulariteit:", self.q2_granularity_combo)
+        layout.addRow("Gebied(en) (optioneel):", self.q2_area_input)
+        return widget
+
+    def _create_query3_params(self):
+        """Create parameter widget for Query 3"""
+        widget = QWidget()
+        layout = QFormLayout(widget)
+        self.q3_sex_m_check = QCheckBox("Male (M)")
+        self.q3_sex_f_check = QCheckBox("Female (F)")
+        sex_layout = QHBoxLayout()
+        sex_layout.addWidget(self.q3_sex_m_check)
+        sex_layout.addWidget(self.q3_sex_f_check)
+        self.q3_descent_input = QLineEdit() # Simple input for now
+        self.q3_descent_input.setPlaceholderText("Enter descent codes separated by commas")
+        self.q3_charge_combo = QComboBox() # Placeholder
+        self.q3_charge_combo.addItems(["Optional: Loading charge types..."])
+
+        layout.addRow("Geslacht (Sex Code):", sex_layout)
+        layout.addRow("Etniciteit (Descent Code):", self.q3_descent_input)
+        layout.addRow("Arrestatietype (optioneel):", self.q3_charge_combo)
+        return widget
+
+
+    def _create_query4_params(self):
+        """Create parameter widget for Query 4"""
+        widget = QWidget()
+        layout = QFormLayout(widget)
+
+        # --- Area ComboBox (already changed) ---
+        self.q4_area_combo = QComboBox()
+        self.q4_area_combo.addItems(["Loading areas..."])
+        layout.addRow("Centrum Gebied:", self.q4_area_combo)
+
+        self.q4_radius_spin = QDoubleSpinBox()
+        self.q4_radius_spin.setRange(0.1, 100.0)
+        self.q4_radius_spin.setValue(1.0)
+        self.q4_radius_spin.setSuffix(" km")
+        self.q4_start_date = QDateEdit(datetime.now().date())
+        self.q4_end_date = QDateEdit(datetime.now().date())
+
+        # --- Replace QLineEdit with QComboBox ---
+        self.q4_arrest_type_combo = QComboBox()
+        self.q4_arrest_type_combo.addItems(["Loading types..."]) # Placeholder
+        # ---------------------------------------
+
+        layout.addRow("Radius:", self.q4_radius_spin)
+        layout.addRow("Startdatum:", self.q4_start_date)
+        layout.addRow("Einddatum:", self.q4_end_date)
+        # --- Use ComboBox in layout ---
+        layout.addRow("Arrestatietype (optioneel):", self.q4_arrest_type_combo)
+        # -----------------------------
+        return widget
+
+    def display_results(self, results):
+        """Display query results in the table"""
+        self.results_table.setRowCount(0) # Clear previous results
+        self.plot_label.hide() # Hide plot by default
+        self.results_table.show() # Show table by default
+
+        if not results or 'data' not in results or not results['data']:
+            self.results_table.setRowCount(1)
+            no_results_item = QTableWidgetItem("No results found or empty data.")
+            no_results_item.setTextAlignment(Qt.AlignCenter)
+            self.results_table.setItem(0, 0, no_results_item)
+            self.results_table.setSpan(0, 0, 1, self.results_table.columnCount())
+            logger.info("No results to display.")
+            return
+
+        data = results['data']
+        headers = results.get('headers', [])
+        
+        if not headers:
+             # Attempt to infer headers if not provided
+            if isinstance(data[0], dict):
+                headers = list(data[0].keys())
+            else:
+                # Fallback if data format is unexpected
+                headers = [f"Column {i+1}" for i in range(len(data[0]))] if data else []
+
+        if not headers:
+             logger.warning("Could not determine headers for results table.")
+             self.results_table.setRowCount(1)
+             item = QTableWidgetItem("Error: Could not determine result headers.")
+             item.setTextAlignment(Qt.AlignCenter)
+             self.results_table.setItem(0, 0, item)
+             self.results_table.setSpan(0, 0, 1, 1) # Span across one column only
+             return
+
+
+        self.results_table.setColumnCount(len(headers))
+        self.results_table.setHorizontalHeaderLabels(headers)
+        
+        self.results_table.setRowCount(len(data))
+        
+        for row_idx, row_data in enumerate(data):
+            if isinstance(row_data, dict):
+                for col_idx, header in enumerate(headers):
+                    item = QTableWidgetItem(str(row_data.get(header, "")))
+                    self.results_table.setItem(row_idx, col_idx, item)
+            elif isinstance(row_data, (list, tuple)):
+                 if len(row_data) == len(headers):
+                    for col_idx, cell_data in enumerate(row_data):
+                        item = QTableWidgetItem(str(cell_data))
+                        self.results_table.setItem(row_idx, col_idx, item)
+                 else:
+                     logger.warning(f"Row {row_idx} data length mismatch: expected {len(headers)}, got {len(row_data)}")
+                     item = QTableWidgetItem("Data format error")
+                     self.results_table.setItem(row_idx, 0, item) # Indicate error in first cell
+            else:
+                # Handle unexpected row format
+                logger.warning(f"Unexpected data format in row {row_idx}: {type(row_data)}")
+                item = QTableWidgetItem("Unexpected data format")
+                self.results_table.setItem(row_idx, 0, item)
+
+
+        self.results_table.resizeColumnsToContents()
+        logger.info(f"Displayed {len(data)} results.")
+
+    def display_plot(self, image_bytes, title="Query Result Plot"):
+        """Display a plot image"""
+        try:
+            pixmap = QPixmap()
+            if pixmap.loadFromData(image_bytes):
+                self.plot_label.setPixmap(pixmap.scaled(self.plot_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                self.plot_label.original_pixmap = pixmap # Store original for dialog
+                self.plot_label.setTitle(title)
+                self.plot_label.show()
+                self.results_table.hide() # Hide table when showing plot
+                logger.info("Plot displayed successfully.")
+            else:
+                logger.error("Failed to load image data into QPixmap.")
+                self.display_error_in_plot_area("Failed to load plot image.")
+        except Exception as e:
+            logger.error(f"Error displaying plot: {e}")
+            self.display_error_in_plot_area(f"Error displaying plot: {e}")
+            
+    def display_error_in_plot_area(self, message):
+        """Displays an error message in the plot label area"""
+        self.plot_label.setText(message)
+        self.plot_label.setPixmap(QPixmap()) # Clear any existing pixmap
+        self.plot_label.show()
+        self.results_table.hide()
+
+    def clear_results(self):
+        """Clear the results table and plot"""
+        self.results_table.setRowCount(0)
+        self.results_table.setColumnCount(0)
+        self.plot_label.clear()
+        self.plot_label.hide()
+        self.results_table.show()
+        logger.info("Query results cleared.")
 
 
 class MessageWidget(QWidget):
@@ -630,43 +753,30 @@ class FigureLabel(QLabel):
 
 
 class ClientGUI(QMainWindow):
-    """Main window for the client GUI"""
+    """Main GUI class for the client application"""
     
     def __init__(self):
         super().__init__()
-        
-        # Create client callback bridge
-        self.callback_bridge = ClientCallbacksBridge()
-        
-        # Create client
+
+        # --- Create the Client object *first* ---
         self.client = Client()
+        # -----------------------------------------
+
+        self.settings = QSettings("YourCompany", "ArrestClientGUI") # For theme persistence
+        self.message_check_timer = QTimer(self)
+        self.callbacks_bridge = ClientCallbacksBridge()
+        self.plot_dialog = None # To store reference to plot dialog
+        self.tab_reset_handlers = {} # <--- ADD THIS LINE
+
+        # Load or default theme
+        self.current_theme = self.settings.value("theme", "dark") # Default to dark
         
-        # Store notification reset handlers
-        self.tab_reset_handlers = {}
-        
-        # Initialize settings
-        self.settings = QSettings("ArrestDataClient", "AppSettings")
-        
-        # Default theme to dark
-        self.dark_theme = self.settings.value("dark_theme", True, type=bool)
-        
-        # Set up UI
         self.setup_ui()
-        
-        # Apply initial theme
-        self.apply_theme()
-        
-        # Connect signals from bridge to slots
-        self.connect_signals()
-        
-        # Set up client callbacks to use the bridge
         self.setup_callbacks()
-        
-        # Set up timer for checking messages
-        self.message_timer = QTimer(self)
-        self.message_timer.timeout.connect(self.check_messages)
-        self.message_timer.start(100)  # Check messages every 100ms
-    
+        self.connect_signals()
+        self.apply_theme() # Apply initial theme
+        self.update_ui_state() # Initial UI state based on connection/login status
+
     def setup_ui(self):
         """Set up the UI for the main window"""
         # Set window properties
@@ -708,7 +818,7 @@ class ClientGUI(QMainWindow):
         
         # Theme toggle checkbox
         self.theme_toggle = QCheckBox("Dark Theme")
-        self.theme_toggle.setChecked(self.dark_theme)
+        self.theme_toggle.setChecked(self.current_theme == "dark")
         self.theme_toggle.stateChanged.connect(self.toggle_theme)
         header_layout.addWidget(self.theme_toggle)
         
@@ -732,10 +842,8 @@ class ClientGUI(QMainWindow):
         self.main_tabs = QTabWidget()
         
         # Query tab
-        self.query_widget = QueryWidget()
-        self.query_widget.query_type_combo.currentIndexChanged.connect(self.update_query_params)
-        self.query_widget.send_query_button.clicked.connect(self.send_query)
-        self.main_tabs.addTab(self.query_widget, "Query")
+        self.query_tab = QueryWidget()
+        self.main_tabs.addTab(self.query_tab, "Query")
         
         # Messages tab
         self.message_widget = MessageWidget()
@@ -761,10 +869,10 @@ class ClientGUI(QMainWindow):
         # Initialize UI state
         self.update_ui_state()
         self.update_query_params()
-    
+
     def apply_theme(self):
         """Apply the current theme to the application"""
-        if self.dark_theme:
+        if self.current_theme == "dark":
             QApplication.instance().setStyleSheet(DARK_STYLESHEET)
             # Fix tab text color for notifications when using dark theme
             for key in self.tab_reset_handlers.keys():
@@ -779,49 +887,64 @@ class ClientGUI(QMainWindow):
     
     def toggle_theme(self):
         """Toggle between light and dark themes"""
-        self.dark_theme = self.theme_toggle.isChecked()
+        self.current_theme = "dark" if self.theme_toggle.isChecked() else "light"
         # Save the setting
-        self.settings.setValue("dark_theme", self.dark_theme)
+        self.settings.setValue("theme", self.current_theme)
         # Apply the theme
         self.apply_theme()
     
     def connect_signals(self):
-        """Connect signals from bridge to slots"""
-        # Connection status
-        self.callback_bridge.connection_status_changed.connect(self.on_connection_status_change)
+        """Connect signals from UI elements and callbacks bridge"""
+        # Connection
+        # self.connect_button.clicked.connect(self.toggle_connection) # <--- REMOVE OR COMMENT OUT THIS LINE
+        self.callbacks_bridge.connection_status_changed.connect(self.on_connection_status_change)
         
-        # Login status
-        self.callback_bridge.login_status_changed.connect(self.on_login_status_change)
+        # Login/Register
+        self.login_widget.login_button.clicked.connect(self.login)
+        self.login_widget.register_button.clicked.connect(self.show_register)
+        self.register_widget.register_button.clicked.connect(self.register)
+        self.register_widget.back_button.clicked.connect(self.show_login)
+        self.callbacks_bridge.login_status_changed.connect(self.on_login_status_change)
+        
+        # Query
+        self.query_tab.send_query_button.clicked.connect(self.send_query)
+        # Connect plot label click (Assuming FigureLabel is used in QueryWidget)
+        if hasattr(self.query_tab, 'plot_label') and isinstance(self.query_tab.plot_label, FigureLabel):
+             self.query_tab.plot_label.clicked.connect(self.on_figure_clicked)
+        self.callbacks_bridge.query_result_received.connect(self.on_query_result)
         
         # Messages
-        self.callback_bridge.message_received.connect(self.on_message_received)
-        
-        # Query results
-        self.callback_bridge.query_result_received.connect(self.on_query_result)
-        
-        # Error
-        self.callback_bridge.error_occurred.connect(self.on_error)
-        
-        # Connect the figure labels' clicked signals
-        self.query_widget.figure1_label.clicked.connect(self.on_figure_clicked)
-        self.query_widget.figure2_label.clicked.connect(self.on_figure_clicked)
-    
+        # self.message_widget.send_button.clicked.connect(self.send_message) # Already commented out
+        self.message_widget.clear_button.clicked.connect(self.message_widget.clear_messages)
+        self.callbacks_bridge.message_received.connect(self.on_message_received)
+        self.message_check_timer.timeout.connect(self.check_messages)
+
+        # Errors
+        self.callbacks_bridge.error_occurred.connect(self.on_error)
+
+        # Theme toggle
+        # self.theme_toggle.stateChanged.connect(self.toggle_theme) # Already connected in setup_ui
+
+        # Connect FigureLabel clicks from QueryWidget
+        # if hasattr(self.query_tab, 'plot_label'): # Duplicate check, removed
+        #      self.query_tab.plot_label.clicked.connect(self.on_figure_clicked)
+
     def setup_callbacks(self):
         """Set up callbacks for the client to use the bridge"""
         # Connection status callback
-        self.client.on_connection_status_change = self.callback_bridge.on_connection_status_change
+        self.client.on_connection_status_change = self.callbacks_bridge.on_connection_status_change
         
         # Login status callback
-        self.client.on_login_status_change = self.callback_bridge.on_login_status_change
+        self.client.on_login_status_change = self.callbacks_bridge.on_login_status_change
         
         # Query result callback
-        self.client.on_query_result = self.callback_bridge.on_query_result
+        self.client.on_query_result = self.callbacks_bridge.on_query_result
         
         # Message received callback
-        self.client.on_message_received = self.callback_bridge.on_message_received
+        self.client.on_message_received = self.callbacks_bridge.on_message_received
         
         # Error callback
-        self.client.on_error = self.callback_bridge.on_error
+        self.client.on_error = self.callbacks_bridge.on_error
     
     def update_ui_state(self):
         """Update UI state based on connection and login status"""
@@ -860,98 +983,73 @@ class ClientGUI(QMainWindow):
             self.status_bar.showMessage(f"Logged in as {nickname}")
     
     def update_query_params(self):
-        """Update visible query parameters based on selected query type"""
-        query_type = self.query_widget.query_type_combo.currentData()
-        
-        # Add help text based on query type
-        help_texts = {
-            QUERY_AGE_DISTRIBUTION: "Shows the distribution of ages among arrested individuals. No additional parameters needed.",
-            QUERY_TOP_CHARGE_GROUPS: "Shows the most frequent charge groups. You can specify how many top groups to show.",
-            QUERY_ARRESTS_BY_AREA: "Shows arrests by geographic area. You can specify how many top areas to show.",
-            QUERY_ARRESTS_BY_TIME: "Shows arrests by time of day. No additional parameters needed.",
-            QUERY_ARRESTS_BY_MONTH: "Shows arrests by month. You can filter by specific year or view all years.",
-            QUERY_CHARGE_TYPES_BY_AREA: "Shows different charge types by geographic area. You can specify how many top areas and charge types to include.",
-            QUERY_ARRESTS_BY_GENDER: "Shows arrest statistics by gender. You can filter by specific gender.",
-            QUERY_ARRESTS_BY_AGE_RANGE: "Shows arrests for a specific age range. Specify minimum and maximum age.",
-            QUERY_ARRESTS_BY_WEEKDAY: "Shows arrests by day of the week. No additional parameters needed.",
-            QUERY_CORRELATION_ANALYSIS: "Shows correlation between different features. No additional parameters needed."
-        }
-        
-        # Set help text
-        self.query_widget.query_help_text.setText(help_texts.get(query_type, "No help available for this query type."))
-        
-        # Hide all parameter widgets initially
-        for i in range(self.query_widget.parameters_layout.rowCount()):
-            label_item = self.query_widget.parameters_layout.itemAt(i, QFormLayout.LabelRole)
-            field_item = self.query_widget.parameters_layout.itemAt(i, QFormLayout.FieldRole)
-            
-            if label_item and field_item:
-                label_widget = label_item.widget()
-                field_widget = field_item.widget()
-                
-                if label_widget and field_widget:
-                    label_widget.setVisible(False)
-                    field_widget.setVisible(False)
-        
-        # Show relevant parameter widgets based on query type
-        if query_type in [QUERY_TOP_CHARGE_GROUPS, QUERY_ARRESTS_BY_AREA, QUERY_CHARGE_TYPES_BY_AREA]:
-            # Show N parameter
-            n_label = self.query_widget.parameters_layout.itemAt(0, QFormLayout.LabelRole).widget()
-            n_field = self.query_widget.parameters_layout.itemAt(0, QFormLayout.FieldRole).widget()
-            if n_label and n_field:
-                # Update label text based on query type
-                if query_type == QUERY_CHARGE_TYPES_BY_AREA:
-                    n_label.setText("Top N Areas/Charges:")
-                else:
-                    n_label.setText("Top N:")
-                n_label.setVisible(True)
-                n_field.setVisible(True)
-        
-        elif query_type == QUERY_ARRESTS_BY_MONTH:
-            # Show year parameter
-            year_label = self.query_widget.parameters_layout.itemAt(1, QFormLayout.LabelRole).widget()
-            year_field = self.query_widget.parameters_layout.itemAt(1, QFormLayout.FieldRole).widget()
-            if year_label and year_field:
-                year_label.setVisible(True)
-                year_field.setVisible(True)
-        
-        elif query_type == QUERY_ARRESTS_BY_GENDER:
-            # Show gender parameter
-            gender_label = self.query_widget.parameters_layout.itemAt(2, QFormLayout.LabelRole).widget()
-            gender_field = self.query_widget.parameters_layout.itemAt(2, QFormLayout.FieldRole).widget()
-            if gender_label and gender_field:
-                gender_label.setVisible(True)
-                gender_field.setVisible(True)
-        
-        elif query_type == QUERY_ARRESTS_BY_AGE_RANGE:
-            # Show age range parameters
-            min_age_label = self.query_widget.parameters_layout.itemAt(3, QFormLayout.LabelRole).widget()
-            min_age_field = self.query_widget.parameters_layout.itemAt(3, QFormLayout.FieldRole).widget()
-            max_age_label = self.query_widget.parameters_layout.itemAt(4, QFormLayout.LabelRole).widget()
-            max_age_field = self.query_widget.parameters_layout.itemAt(4, QFormLayout.FieldRole).widget()
-            
-            if min_age_label and min_age_field and max_age_label and max_age_field:
-                min_age_label.setVisible(True)
-                min_age_field.setVisible(True)
-                max_age_label.setVisible(True)
-                max_age_field.setVisible(True)
+        """Fetch dynamic parameters for query dropdowns"""
+        logger.info("update_query_params called...")
+        if self.client and self.client.connected and self.client.logged_in:
+            logger.info("Attempting to fetch dynamic query parameters...")
+            try:
+                # Fetch Areas
+                self.client.send_request({
+                    'command': 'get_metadata',
+                    'type': 'areas'
+                }) # Response handled in on_query_result
+
+                # Fetch Charge Groups
+                self.client.send_request({
+                    'command': 'get_metadata',
+                    'type': 'charge_groups'
+                }) # Response handled in on_query_result
+
+                # Fetch Descent Codes
+                self.client.send_request({
+                    'command': 'get_metadata',
+                    'type': 'descent_codes'
+                }) # Response handled in on_query_result
+
+                # Fetch Date Range
+                self.client.send_request({
+                    'command': 'get_metadata',
+                    'type': 'date_range'
+                }) # Response handled in on_query_result
+
+                # --- ADD REQUEST FOR ARREST TYPE CODES ---
+                self.client.send_request({
+                    'command': 'get_metadata',
+                    'type': 'arrest_type_codes'
+                })
+                # -----------------------------------------
+
+            except Exception as e:
+                logger.error(f"Error sending metadata request: {e}", exc_info=True)
+                self.status_bar.showMessage(f"Error fetching query parameters: {e}", 5000)
+        else:
+            logger.warning("Cannot fetch query parameters: Not connected or not logged in.")
     
     def toggle_connection(self):
         """Toggle connection to the server"""
-        if self.client.connected:
-            # Disconnect from server
+        # Check the connection state *before* deciding the action
+        is_currently_connected = self.client.connected
+
+        if is_currently_connected:
+            # Action: Disconnect
+            logger.info("TOGGLE_CONNECTION: Currently connected. Attempting disconnect.")
             self.client.disconnect()
+            # Callbacks initiated by disconnect() will handle UI updates
         else:
-            # Connect to server
+            # Action: Connect
+            logger.info("TOGGLE_CONNECTION: Currently disconnected. Attempting connect.")
             host = self.host_edit.text()
             port = self.port_spinbox.value()
-            
-            # Update client host and port
+
+            # Update client host and port before connecting
             self.client.host = host
             self.client.port = port
-            
-            # Connect to server
+
+            # Attempt to connect.
+            # The connect method itself handles setting flags and calling
+            # on_connection_status_change(True/False) via callbacks.
             self.client.connect()
+            # No further action needed here; UI updates are handled by callbacks.
     
     def on_connection_status_change(self, connected):
         """Called when connection status changes"""
@@ -959,100 +1057,177 @@ class ClientGUI(QMainWindow):
     
     def on_login_status_change(self, logged_in):
         """Called when login status changes"""
+        logger.info(f"Login status changed. Logged in: {logged_in}") # Add log
         self.update_ui_state()
+        if logged_in:
+             logger.info("Login successful, triggering parameter update.")
+             self.update_query_params() # Fetch metadata AFTER successful login
     
     def on_query_result(self, result):
-        """Called when query result is received"""
-        # Set title
-        self.query_widget.results_title.setText(result.get('title', 'Query Results'))
-        
-        # Update table if data is present
-        if 'data' in result and result['data'] is not None:
-            df = result['data']
-            
-            # Set up table
-            self.query_widget.results_table.clear()
-            self.query_widget.results_table.setRowCount(len(df))
-            self.query_widget.results_table.setColumnCount(len(df.columns))
-            
-            # Set headers
-            self.query_widget.results_table.setHorizontalHeaderLabels(df.columns)
-            
-            # Fill data
-            for i, row in enumerate(df.itertuples(index=False)):
-                for j, value in enumerate(row):
-                    item = QTableWidgetItem(str(value))
-                    self.query_widget.results_table.setItem(i, j, item)
-            
-            # Resize columns to contents
-            self.query_widget.results_table.resizeColumnsToContents()
-        else:
-            # Clear table
-            self.query_widget.results_table.clear()
-            self.query_widget.results_table.setRowCount(0)
-            self.query_widget.results_table.setColumnCount(0)
-        
-        # Update figures if present
-        if 'figure' in result and result['figure'] is not None:
-            img = result['figure']
-            pixmap = QPixmap.fromImage(ImageQt.ImageQt(img))
-            self.query_widget.figure1_label.setPixmap(pixmap)
-            self.query_widget.figure1_label.setText("")
-            self.query_widget.figure1_label.setTitle(result.get('title', 'Figure 1'))
-        else:
-            self.query_widget.figure1_label.setPixmap(QPixmap())
-            self.query_widget.figure1_label.setText("No figure available")
-        
-        if 'figure2' in result and result['figure2'] is not None:
-            img = result['figure2']
-            pixmap = QPixmap.fromImage(ImageQt.ImageQt(img))
-            self.query_widget.figure2_label.setPixmap(pixmap)
-            self.query_widget.figure2_label.setText("")
-            self.query_widget.figure2_label.setTitle(result.get('title', 'Figure 2') + " (Detail)")
-        else:
-            self.query_widget.figure2_label.setPixmap(QPixmap())
-            self.query_widget.figure2_label.setText("No figure available")
-    
-    def setup_tab_notification(self, tab_widget, tab_index, original_text):
-        """Set up a notification on a tab with proper connection handling"""
-        # Change the tab text with a more noticeable indicator
-        tab_widget.setTabText(tab_index, "🔔 " + original_text)
-        tab_widget.tabBar().setTabTextColor(tab_index, Qt.red)
-        
-        # Create a handler function
-        def reset_tab_notification():
-            if tab_widget.currentWidget() == tab_widget.widget(tab_index):
-                tab_widget.setTabText(tab_index, original_text)
-                
-                # Use appropriate text color based on current theme
-                if self.dark_theme:
-                    tab_widget.tabBar().setTabTextColor(tab_index, Qt.white)
-                else:
-                    tab_widget.tabBar().setTabTextColor(tab_index, Qt.black)
+        """Handle results received from the server"""
+        logger.info(f"Received query result: {type(result)}")
+        # print(f"DEBUG: Full result received: {result}") # For debugging
+
+        if isinstance(result, dict):
+            query_type = result.get('query_type', 'unknown') # Get query type if available
+            metadata_type = result.get('metadata_type') # Check if it's metadata
+
+            if metadata_type:
+                self.handle_metadata_result(metadata_type, result.get('data', []))
+            elif query_type == 'query3' and 'plot' in result and result['plot']:
+                # Handle plot data specifically for Query 3
+                try:
+                    image_bytes = result['plot']
+                    # Optional: Decode if base64 encoded (depends on server implementation)
+                    # import base64
+                    # if isinstance(image_bytes, str):
+                    #     image_bytes = base64.b64decode(image_bytes)
                     
-                # Remove the handler from our dictionary once used
-                key = (tab_widget, tab_index)
-                if key in self.tab_reset_handlers:
-                    del self.tab_reset_handlers[key]
-                    # Disconnect once we've handled the reset
+                    self.query_tab.display_plot(image_bytes, title="Demografische Analyse")
+                    self.statusBar().showMessage("Graph result displayed.", 3000)
+                except Exception as e:
+                    logger.error(f"Error processing plot data for Query 3: {e}")
+                    self.query_tab.display_error_in_plot_area(f"Error processing plot: {e}")
+                    self.statusBar().showMessage("Error displaying graph.", 5000)
+            elif 'error' in result:
+                 logger.error(f"Query Error from server or client processing: {result['error']}")
+                 self.status_bar.showMessage(f"Query Error: {result['error']}", 5000)
+                 # Display the specific error in the table
+                 self.query_tab.display_results({'data': [[result['error']]], 'headers': ['Error']})
+            else:
+                # Handle tabular data for other queries or if Query 3 has no plot
+                self.query_tab.display_results(result)
+
+                # --- ADD CHECK FOR DATA BEFORE LEN() ---
+                record_count = 0
+                if result.get('data') is not None:
                     try:
-                        tab_widget.currentChanged.disconnect(reset_tab_notification)
-                    except:
-                        pass
-        
-        # Store the handler (overwriting any existing one)
-        key = (tab_widget, tab_index)
-        if key in self.tab_reset_handlers:
-            # Disconnect the previous handler
-            try:
-                tab_widget.currentChanged.disconnect(self.tab_reset_handlers[key])
-            except:
-                pass
-        
-        # Store and connect the new handler
-        self.tab_reset_handlers[key] = reset_tab_notification
-        tab_widget.currentChanged.connect(reset_tab_notification)
-    
+                        record_count = len(result['data'])
+                    except TypeError: # Handle if data is not a sequence (shouldn't happen often now)
+                         logger.warning("Could not get length of received data.")
+                         record_count = 'N/A' # Or 1 if it's non-sequence data?
+                # ----------------------------------------
+
+                self.status_bar.showMessage(f"Query successful. Displayed {record_count} records.", 3000)
+        else:
+             logger.error(f"Received unexpected result format: {type(result)}")
+             self.statusBar().showMessage("Received unexpected result format from server.", 5000)
+             # Display error in table
+             self.query_tab.display_results({'data': [], 'headers': ['Error']})
+             self.query_tab.results_table.setItem(0, 0, QTableWidgetItem("Unexpected result format"))
+             self.query_tab.results_table.setSpan(0, 0, 1, 1)
+
+    def handle_metadata_result(self, metadata_type, data):
+        """Update combo boxes or date edits with metadata received from server"""
+        logger.info(f"Handling metadata for: {metadata_type}")
+
+        if metadata_type == 'areas':
+            if not isinstance(data, list):
+                 logger.warning(f"Received non-list data for metadata {metadata_type}")
+                 return
+            # --- Update BOTH area combo boxes ---
+            area_combo_q1 = self.query_tab.q1_area_combo
+            area_combo_q4 = self.query_tab.q4_area_combo
+            area_combo_q1.clear()
+            area_combo_q4.clear()
+            if data:
+                items = [str(item) for item in data]
+                area_combo_q1.addItems(items)
+                area_combo_q4.addItems(items) # Populate Q4 as well
+            else:
+                area_combo_q1.addItem("No areas found")
+                area_combo_q4.addItem("No areas found")
+            # ------------------------------------
+        elif metadata_type == 'charge_groups':
+            if not isinstance(data, list):
+                 logger.warning(f"Received non-list data for metadata {metadata_type}")
+                 return
+            q2_charge_combo = self.query_tab.q2_charge_combo
+            q3_charge_combo = self.query_tab.q3_charge_combo
+            q2_charge_combo.clear()
+            q3_charge_combo.clear()
+            q3_charge_combo.addItem("Optional: All Types") # Add default option for Q3
+            if data:
+                 items = [str(item) for item in data]
+                 q2_charge_combo.addItems(items)
+                 q3_charge_combo.addItems(items)
+            else:
+                 q2_charge_combo.addItem("No charge types found")
+                 q3_charge_combo.addItem("No charge types found")
+        elif metadata_type == 'descent_codes':
+            if not isinstance(data, list):
+                 logger.warning(f"Received non-list data for metadata {metadata_type}")
+                 return
+            # For descent codes, inform the user via placeholder
+            descent_codes_str = ", ".join([str(item) for item in data]) if data else "None available"
+            self.query_tab.q3_descent_input.setPlaceholderText(f"Available: {descent_codes_str}. Enter comma-separated.")
+        elif metadata_type == 'date_range':
+             if not isinstance(data, dict):
+                  logger.warning(f"Received non-dict data for metadata {metadata_type}")
+                  return
+             try:
+                  min_date_str = data.get('min_date')
+                  max_date_str = data.get('max_date')
+
+                  # Use QDate.currentDate() as fallback if parsing fails or data missing
+                  min_qdate = QDate.fromString(min_date_str.split('T')[0], Qt.ISODate) if min_date_str else QDate.currentDate()
+                  max_qdate = QDate.fromString(max_date_str.split('T')[0], Qt.ISODate) if max_date_str else QDate.currentDate()
+
+                  # Ensure min_qdate is not invalid (QDate() is invalid)
+                  if not min_qdate.isValid():
+                       min_qdate = QDate.currentDate()
+                  if not max_qdate.isValid():
+                       max_qdate = QDate.currentDate()
+
+                  logger.info(f"Processing date range: Min={min_qdate.toString(Qt.ISODate)}, Max={max_qdate.toString(Qt.ISODate)}")
+
+                  # --- Explicitly set ranges and dates for each widget ---
+                  # Query 1 Widgets
+                  if hasattr(self.query_tab, 'q1_start_date'):
+                      self.query_tab.q1_start_date.setMinimumDate(min_qdate)
+                      self.query_tab.q1_start_date.setMaximumDate(max_qdate)
+                      self.query_tab.q1_start_date.setDate(min_qdate) # Default start to min
+                      logger.debug(f"Set q1_start_date: Range [{min_qdate.toString(Qt.ISODate)} - {max_qdate.toString(Qt.ISODate)}], Value: {min_qdate.toString(Qt.ISODate)}")
+
+                  if hasattr(self.query_tab, 'q1_end_date'):
+                      self.query_tab.q1_end_date.setMinimumDate(min_qdate)
+                      self.query_tab.q1_end_date.setMaximumDate(max_qdate)
+                      self.query_tab.q1_end_date.setDate(max_qdate) # Default end to max
+                      logger.debug(f"Set q1_end_date: Range [{min_qdate.toString(Qt.ISODate)} - {max_qdate.toString(Qt.ISODate)}], Value: {max_qdate.toString(Qt.ISODate)}")
+
+                  # Query 4 Widgets
+                  if hasattr(self.query_tab, 'q4_start_date'):
+                      self.query_tab.q4_start_date.setMinimumDate(min_qdate)
+                      self.query_tab.q4_start_date.setMaximumDate(max_qdate)
+                      self.query_tab.q4_start_date.setDate(min_qdate) # Default start to min
+                      logger.debug(f"Set q4_start_date: Range [{min_qdate.toString(Qt.ISODate)} - {max_qdate.toString(Qt.ISODate)}], Value: {min_qdate.toString(Qt.ISODate)}")
+
+                  if hasattr(self.query_tab, 'q4_end_date'):
+                      self.query_tab.q4_end_date.setMinimumDate(min_qdate)
+                      self.query_tab.q4_end_date.setMaximumDate(max_qdate)
+                      self.query_tab.q4_end_date.setDate(max_qdate) # Default end to max
+                      logger.debug(f"Set q4_end_date: Range [{min_qdate.toString(Qt.ISODate)} - {max_qdate.toString(Qt.ISODate)}], Value: {max_qdate.toString(Qt.ISODate)}")
+                  # -------------------------------------------------------
+
+                  logger.info(f"Successfully set date range and values for date editors.")
+
+             except Exception as e:
+                  logger.error(f"Error processing date_range metadata: {e}", exc_info=True)
+        elif metadata_type == 'arrest_type_codes':
+             if not isinstance(data, list):
+                  logger.warning(f"Received non-list data for metadata {metadata_type}")
+                  return
+             arrest_type_combo = self.query_tab.q4_arrest_type_combo
+             arrest_type_combo.clear()
+             arrest_type_combo.addItem("All Types") # Add default 'All' option
+             if data:
+                 arrest_type_combo.addItems([str(item) for item in data])
+             else:
+                 arrest_type_combo.addItem("No types found") # Fallback
+             logger.info(f"Populated Arrest Type Code dropdown.")
+        else:
+            logger.warning(f"Received unknown metadata type: {metadata_type}")
+
     def on_message_received(self, timestamp, message):
         """Called when message is received from server"""
         # Add message to message widget
@@ -1192,34 +1367,77 @@ class ClientGUI(QMainWindow):
         self.show_login()
     
     def send_query(self):
-        """Send query to server"""
-        # Get query type
-        query_type = self.query_widget.query_type_combo.currentData()
-        
-        # Prepare parameters based on query type
-        params = {}
-        
-        if query_type in [QUERY_TOP_CHARGE_GROUPS, QUERY_ARRESTS_BY_AREA]:
-            params['n'] = self.query_widget.n_spinbox.value()
-        elif query_type == QUERY_CHARGE_TYPES_BY_AREA:
-            # Use the n_spinbox value for both n_areas and n_charges
-            params['n_areas'] = self.query_widget.n_spinbox.value()
-            params['n_charges'] = self.query_widget.n_spinbox.value()
-        elif query_type == QUERY_ARRESTS_BY_MONTH:
-            if self.query_widget.year_spinbox.value() != self.query_widget.year_spinbox.minimum():
-                params['year'] = self.query_widget.year_spinbox.value()
-        elif query_type == QUERY_ARRESTS_BY_GENDER:
-            if self.query_widget.gender_combo.currentData() != 'all':
-                params['gender'] = self.query_widget.gender_combo.currentData()
-        elif query_type == QUERY_ARRESTS_BY_AGE_RANGE:
-            params['min_age'] = self.query_widget.min_age_spinbox.value()
-            params['max_age'] = self.query_widget.max_age_spinbox.value()
-        
-        # Send query
-        self.client.send_query(query_type, params)
-        
-        # Update status bar
-        self.status_bar.showMessage(f"Query sent: {QUERY_DESCRIPTIONS.get(query_type, query_type)}")
+        """Gather parameters based on selected query and send to server"""
+        if not self.client or not self.client.connected or not self.client.logged_in:
+            QMessageBox.warning(self, "Not Connected", "Please connect and log in first.")
+            return
+
+        query_index = self.query_tab.query_type_combo.currentIndex()
+        params = {'command': 'query'}
+        query_type_id = f"query{query_index + 1}" # e.g., query1, query2, etc.
+        params['query_type'] = query_type_id
+
+        try:
+            if query_index == 0: # Query 1
+                params['area_name'] = self.query_tab.q1_area_combo.currentText()
+                params['start_date'] = self.query_tab.q1_start_date.date().toString(Qt.ISODate)
+                params['end_date'] = self.query_tab.q1_end_date.date().toString(Qt.ISODate)
+                params['min_age'] = self.query_tab.q1_min_age_spin.value()
+                params['max_age'] = self.query_tab.q1_max_age_spin.value()
+                if params['min_age'] > params['max_age']:
+                    raise ValueError("Minimum age cannot be greater than maximum age.")
+            elif query_index == 1: # Query 2
+                params['charge_group'] = self.query_tab.q2_charge_combo.currentText()
+                params['granularity'] = self.query_tab.q2_granularity_combo.currentText().lower()
+                areas = self.query_tab.q2_area_input.text().strip()
+                params['areas'] = [a.strip() for a in areas.split(',') if a.strip()] if areas else [] # Optional
+            elif query_index == 2: # Query 3
+                sex_codes = []
+                if self.query_tab.q3_sex_m_check.isChecked(): sex_codes.append('M')
+                if self.query_tab.q3_sex_f_check.isChecked(): sex_codes.append('F')
+                if not sex_codes: raise ValueError("Please select at least one gender.")
+                params['sex_codes'] = sex_codes
+                
+                descents = self.query_tab.q3_descent_input.text().strip()
+                params['descent_codes'] = [d.strip().upper() for d in descents.split(',') if d.strip()]
+                if not params['descent_codes']: raise ValueError("Please enter at least one descent code.")
+
+                charge_group = self.query_tab.q3_charge_combo.currentText()
+                params['charge_group'] = charge_group if "Optional:" not in charge_group else None # Optional
+                params['generate_plot'] = True # Explicitly request plot
+                
+            elif query_index == 3: # Query 4
+                 params['area_name'] = self.query_tab.q4_area_combo.currentText()
+                 if "Loading areas..." in params['area_name'] or "No areas found" in params['area_name']:
+                      raise ValueError("Please select a valid Centrum Gebied.")
+
+                 params['radius_km'] = self.query_tab.q4_radius_spin.value()
+                 params['start_date'] = self.query_tab.q4_start_date.date().toString(Qt.ISODate)
+                 params['end_date'] = self.query_tab.q4_end_date.date().toString(Qt.ISODate)
+
+                 # --- Get selected arrest type (handle "All Types") ---
+                 selected_arrest_type = self.query_tab.q4_arrest_type_combo.currentText()
+                 params['arrest_type_code'] = selected_arrest_type if selected_arrest_type != "All Types" else None # Send None for 'All'
+                 # ---------------------------------------------------
+
+                 # Note: The server side 'process_query4' expects 'arrest_types' (plural list)
+                 # We are sending 'arrest_type_code' (singular). Need to adjust server.
+            else:
+                QMessageBox.critical(self, "Error", "Invalid query type selected.")
+                return
+
+            logger.info(f"Sending query: {params}")
+            self.statusBar().showMessage(f"Sending {query_type_id}...")
+            self.query_tab.clear_results() # Clear previous results before sending
+            self.client.send_request(params)
+
+        except ValueError as ve:
+            QMessageBox.warning(self, "Input Error", str(ve))
+            self.statusBar().showMessage(f"Input Error: {ve}", 5000)
+        except Exception as e:
+            logger.error(f"Error preparing or sending query: {e}")
+            QMessageBox.critical(self, "Query Error", f"An error occurred: {e}")
+            self.statusBar().showMessage(f"Query Error: {e}", 5000)
     
     def on_figure_clicked(self, pixmap, title):
         """Handle a figure being clicked"""
@@ -1235,6 +1453,64 @@ class ClientGUI(QMainWindow):
         
         # Accept the event
         event.accept()
+
+    def setup_tab_notification(self, tab_widget, tab_index, original_text):
+        """Set up a notification on a tab with proper connection handling"""
+        # Use a simple indicator, e.g., a star or bell
+        notification_prefix = "🔔 "
+        tab_widget.setTabText(tab_index, f"{notification_prefix}{original_text}")
+        tab_widget.tabBar().setTabTextColor(tab_index, Qt.red) # Use red for notifications
+
+        # --- Handler function to reset notification ---
+        def reset_tab_notification():
+            # Check if the notified tab is the one being switched to
+            if tab_widget.currentWidget() == tab_widget.widget(tab_index):
+                tab_widget.setTabText(tab_index, original_text) # Reset text
+
+                # Reset color based on theme
+                text_color = Qt.white if self.current_theme == "dark" else Qt.black
+                # For selected tab, use theme's selected color if available
+                if tab_widget.currentIndex() == tab_index:
+                     if self.current_theme == "dark":
+                          # Use the selected tab color from the stylesheet or a fallback
+                          text_color = QColor("#FFFFFF") # White for dark theme selected
+                     else:
+                          text_color = QColor("#FFFFFF") # Often white for light theme selected too
+
+                # Explicitly set the color (might be overridden by stylesheet selection)
+                # This part might need refinement depending on exact stylesheet behavior
+                # tab_widget.tabBar().setTabTextColor(tab_index, text_color)
+
+
+                # Clean up the handler
+                key = (tab_widget, tab_index)
+                if key in self.tab_reset_handlers:
+                    # Disconnect the specific handler
+                    try:
+                         handler_to_disconnect = self.tab_reset_handlers.pop(key)
+                         tab_widget.currentChanged.disconnect(handler_to_disconnect)
+                         logger.debug(f"Disconnected notification reset handler for tab {tab_index}")
+                    except (TypeError, RuntimeError) as e:
+                         logger.warning(f"Could not disconnect handler for tab {tab_index}: {e}")
+
+        # --- Store and connect the handler ---
+        key = (tab_widget, tab_index)
+        # Disconnect previous handler for this specific tab if it exists
+        if key in self.tab_reset_handlers:
+            try:
+                old_handler = self.tab_reset_handlers[key]
+                tab_widget.currentChanged.disconnect(old_handler)
+                logger.debug(f"Disconnected old handler for tab {tab_index} before adding new one.")
+            except (TypeError, RuntimeError) as e:
+                logger.warning(f"Could not disconnect old handler for tab {tab_index}: {e}")
+
+        # Store and connect the new handler
+        self.tab_reset_handlers[key] = reset_tab_notification
+        try:
+            tab_widget.currentChanged.connect(reset_tab_notification)
+            logger.debug(f"Connected notification reset handler for tab {tab_index}")
+        except Exception as e:
+            logger.error(f"Failed to connect notification handler: {e}")
 
 
 if __name__ == "__main__":
