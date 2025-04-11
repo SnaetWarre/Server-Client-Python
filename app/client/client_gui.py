@@ -762,7 +762,7 @@ class ClientGUI(QMainWindow):
         self.client = Client()
         # -----------------------------------------
 
-        self.settings = QSettings("YourCompany", "ArrestClientGUI") # For theme persistence
+        self.settings = QSettings("ArrestDataApp", "Client/AppSettings") # For theme persistence
         self.message_check_timer = QTimer(self)
         self.callbacks_bridge = ClientCallbacksBridge()
         self.plot_dialog = None # To store reference to plot dialog
@@ -1518,11 +1518,12 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     
     # Load settings to check for initial theme
-    settings = QSettings("ArrestDataClient", "AppSettings")
-    dark_theme = settings.value("dark_theme", True, type=bool)
+    settings = QSettings("ArrestDataApp", "Client/AppSettings")
+    # Fetch the theme setting key used in ClientGUI.__init__ which is 'theme'
+    current_theme = settings.value("theme", "dark") # Default to dark
     
     # Apply initial theme before creating the UI
-    if dark_theme:
+    if current_theme == "dark":
         app.setStyleSheet(DARK_STYLESHEET)
     else:
         app.setStyleSheet(LIGHT_STYLESHEET)

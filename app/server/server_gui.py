@@ -212,7 +212,7 @@ class ServerGUI(QMainWindow):
         self.setMinimumSize(800, 600)
         
         # Initialize settings
-        self.settings = QSettings("ArrestDataServer", "AppSettings")
+        self.settings = QSettings("ArrestDataApp", "Server/AppSettings")
         
         # Default theme to dark
         self.dark_theme = self.settings.value("dark_theme", True, type=bool)
@@ -730,7 +730,7 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     
     # Load settings to check for initial theme
-    settings = QSettings("ArrestDataServer", "AppSettings")
+    settings = QSettings("ArrestDataApp", "Server/AppSettings")
     dark_theme = settings.value("dark_theme", True, type=bool)
     
     # Apply initial theme before creating the UI
