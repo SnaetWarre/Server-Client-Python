@@ -174,6 +174,11 @@ class ClientHandler(threading.Thread):
     
     def handle_login(self, data):
         """Handle a login request"""
+        # Prevent duplicate login processing (patch added)
+        if getattr(self, 'client_info', None) is not None:
+            logger.warning(f"Duplicate login attempt ignored for client {self.address}")
+            return
+            
         # Extract login data
         email = data.get('email')
         password = data.get('password')
@@ -472,6 +477,11 @@ class ClientHandler(threading.Thread):
     
     def cleanup(self):
         """Clean up resources"""
+        # Ensure cleanup is only performed once
+        if getattr(self, 'cleaned_up', False):
+            return
+        self.cleaned_up = True
+        
         logger.info(f"Cleaning up connection for client {self.address}")
         
         # End session if client was logged in

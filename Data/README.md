@@ -47,16 +47,7 @@ The analysis is performed in the `data_analysis.py` script, which conducts the f
 - `Arrest_Data_from_2020_to_Present.csv`: Original dataset
 - `data_analysis.py`: Python script for analysis and preprocessing
 - `processed_arrest_data.csv`: Cleaned and processed dataset
-- `plots/`: Directory containing visualization outputs:
-  - `arrests_over_time.png`: Time series of arrests by month
-  - `age_distribution.png`: Distribution of ages
-  - `top_charges.png`: Top 10 charge groups
-  - `arrests_by_area.png`: Arrests by geographic area
-  - `improved_correlation_heatmap.png`: Heatmap showing correlations between meaningful features
-  - `arrests_by_day_and_hour.png`: Heatmap showing arrest patterns by day and hour
-  - `age_distribution_by_gender.png`: Violin plot of age distribution by gender
-  - `charge_types_by_area.png`: Stacked bar chart of charge types by area
-  - `monthly_arrest_trends.png`: Time series of monthly arrest trends
+
 
 ## Preprocessing Steps
 

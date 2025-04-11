@@ -14,9 +14,7 @@ import os
 plt.style.use('seaborn-v0_8-darkgrid')
 sns.set_palette('viridis')
 
-# Output directory for plots
-plot_dir = 'Data/plots'
-os.makedirs(plot_dir, exist_ok=True)
+
 
 print("Starting data analysis and preprocessing...")
 
@@ -144,7 +142,6 @@ if 'Arrest Date' in df_clean.columns and pd.api.types.is_datetime64_dtype(df_cle
     plt.xlabel('Month')
     plt.ylabel('Number of Arrests')
     plt.grid(True)
-    plt.savefig(f'{plot_dir}/arrests_over_time.png')
     plt.close()
     print("Created plot: arrests_over_time.png")
 
@@ -154,7 +151,6 @@ sns.histplot(df_clean['Age'], bins=30, kde=True)
 plt.title('Age Distribution of Arrested Individuals')
 plt.xlabel('Age')
 plt.ylabel('Count')
-plt.savefig(f'{plot_dir}/age_distribution.png')
 plt.close()
 print("Created plot: age_distribution.png")
 
@@ -165,7 +161,6 @@ sns.barplot(x=top_charges.index, y=top_charges.values)
 plt.title('Top 10 Charge Groups')
 plt.xticks(rotation=45, ha='right')
 plt.tight_layout()
-plt.savefig(f'{plot_dir}/top_charges.png')
 plt.close()
 print("Created plot: top_charges.png")
 
@@ -176,7 +171,6 @@ sns.barplot(x=area_counts.index, y=area_counts.values)
 plt.title('Arrests by Area')
 plt.xticks(rotation=45, ha='right')
 plt.tight_layout()
-plt.savefig(f'{plot_dir}/arrests_by_area.png')
 plt.close()
 print("Created plot: arrests_by_area.png")
 
@@ -251,7 +245,6 @@ if len(existing_cols) > 1:  # Need at least 2 columns for correlation
     plt.xticks(rotation=45, ha='right', fontsize=10)
     plt.yticks(fontsize=10)
     plt.tight_layout()
-    plt.savefig(f'{plot_dir}/improved_correlation_heatmap.png', dpi=300)
     plt.close()
     print("Created plot: improved_correlation_heatmap.png")
 else:
@@ -275,7 +268,6 @@ if 'Arrest Weekday' in df_clean.columns and 'Arrest Hour' in df_clean.columns:
     plt.xlabel('Hour of Day (24h)', fontsize=12)
     plt.ylabel('Day of Week', fontsize=12)
     plt.tight_layout()
-    plt.savefig(f'{plot_dir}/arrests_by_day_and_hour.png')
     plt.close()
     print("Created plot: arrests_by_day_and_hour.png")
 
@@ -296,7 +288,6 @@ if 'Sex Code' in df_clean.columns and 'Age' in df_clean.columns:
     plt.ylabel('Age', fontsize=12)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
-    plt.savefig(f'{plot_dir}/age_distribution_by_gender.png')
     plt.close()
     print("Created plot: age_distribution_by_gender.png")
 
@@ -330,7 +321,6 @@ if 'Area Name' in df_clean.columns and 'Charge Group Description' in df_clean.co
     plt.legend(title='Charge Type', bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
-    plt.savefig(f'{plot_dir}/charge_types_by_area.png')
     plt.close()
     print("Created plot: charge_types_by_area.png")
 
@@ -353,7 +343,6 @@ if 'Arrest Year' in df_clean.columns and 'Arrest Month' in df_clean.columns:
     plt.grid(True, linestyle='--', alpha=0.7)
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
-    plt.savefig(f'{plot_dir}/monthly_arrest_trends.png')
     plt.close()
     print("Created plot: monthly_arrest_trends.png")
 

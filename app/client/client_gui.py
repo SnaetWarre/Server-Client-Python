@@ -483,10 +483,25 @@ class QueryWidget(QWidget):
         widget = QWidget()
         layout = QFormLayout(widget)
 
-        # --- Area ComboBox (already changed) ---
-        self.q4_area_combo = QComboBox()
-        self.q4_area_combo.addItems(["Loading areas..."])
-        layout.addRow("Centrum Gebied:", self.q4_area_combo)
+        # --- Add LAT/LON SpinBoxes ---
+        self.q4_center_lat_spin = QDoubleSpinBox()
+        self.q4_center_lat_spin.setRange(-90.0, 90.0)
+        self.q4_center_lat_spin.setDecimals(6) # Allow more precision
+        self.q4_center_lat_spin.setValue(34.0522) # Example: Default to LA center
+
+        self.q4_center_lon_spin = QDoubleSpinBox()
+        self.q4_center_lon_spin.setRange(-180.0, 180.0)
+        self.q4_center_lon_spin.setDecimals(6) # Allow more precision
+        self.q4_center_lon_spin.setValue(-118.2437) # Example: Default to LA center
+
+        lat_lon_layout = QHBoxLayout()
+        lat_lon_layout.addWidget(QLabel("Latitude:"))
+        lat_lon_layout.addWidget(self.q4_center_lat_spin)
+        lat_lon_layout.addSpacing(10)
+        lat_lon_layout.addWidget(QLabel("Longitude:"))
+        lat_lon_layout.addWidget(self.q4_center_lon_spin)
+        layout.addRow("Centrumpunt (LAT/LON):", lat_lon_layout)
+        # ---------------------------
 
         self.q4_radius_spin = QDoubleSpinBox()
         self.q4_radius_spin.setRange(0.1, 100.0)
@@ -495,21 +510,25 @@ class QueryWidget(QWidget):
         self.q4_start_date = QDateEdit(datetime.now().date())
         self.q4_end_date = QDateEdit(datetime.now().date())
 
-        # --- Replace QLineEdit with QComboBox ---
         self.q4_arrest_type_combo = QComboBox()
         self.q4_arrest_type_combo.addItems(["Loading types..."]) # Placeholder
-        # ---------------------------------------
 
         layout.addRow("Radius:", self.q4_radius_spin)
         layout.addRow("Startdatum:", self.q4_start_date)
         layout.addRow("Einddatum:", self.q4_end_date)
-        # --- Use ComboBox in layout ---
         layout.addRow("Arrestatietype (optioneel):", self.q4_arrest_type_combo)
-        # -----------------------------
         return widget
 
     def display_results(self, results):
         """Display query results in the table"""
+        # --- Reset splitter sizes when showing table ---
+        original_sizes = self.results_splitter.sizes()
+        # Default: give table more space initially if we have sizes, else split roughly 70/30
+        table_height = int(self.results_splitter.height() * 0.7) if sum(original_sizes) == 0 else original_sizes[0]
+        plot_height = self.results_splitter.height() - table_height
+        self.results_splitter.setSizes([table_height, plot_height]) # Adjust as needed
+        # ----------------------------------------------
+
         self.results_table.setRowCount(0) # Clear previous results
         self.plot_label.hide() # Hide plot by default
         self.results_table.show() # Show table by default
@@ -578,12 +597,27 @@ class QueryWidget(QWidget):
         try:
             pixmap = QPixmap()
             if pixmap.loadFromData(image_bytes):
-                self.plot_label.setPixmap(pixmap.scaled(self.plot_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                self.plot_label.original_pixmap = pixmap # Store original for dialog
+                # --- FORCE IMAGE TO FILL 100% OF THE CONTAINER ---
+                # Hide the table completely
+                self.results_table.hide()
+                
+                # Make the plot_label take ALL available space
+                plot_height = self.results_splitter.height()
+                table_height = 0
+                self.results_splitter.setSizes([table_height, plot_height])
+                
+                # Set label to expand fully
+                self.plot_label.setMinimumSize(self.results_splitter.width(), plot_height)
+                
+                # Force pixmap to EXACTLY match label size - NO ASPECT RATIO PRESERVATION
+                self.plot_label.setScaledContents(True)
+                self.plot_label.setPixmap(pixmap)
+                # -----------------------------------------------
+                
+                self.plot_label.original_pixmap = pixmap
                 self.plot_label.setTitle(title)
                 self.plot_label.show()
-                self.results_table.hide() # Hide table when showing plot
-                logger.info("Plot displayed successfully.")
+                logger.info("Plot displayed successfully as fullscreen image.")
             else:
                 logger.error("Failed to load image data into QPixmap.")
                 self.display_error_in_plot_area("Failed to load plot image.")
@@ -593,6 +627,12 @@ class QueryWidget(QWidget):
             
     def display_error_in_plot_area(self, message):
         """Displays an error message in the plot label area"""
+        # --- Reset splitter sizes when showing error in plot area ---
+        original_sizes = self.results_splitter.sizes()
+        table_height = int(self.results_splitter.height() * 0.7) if sum(original_sizes) == 0 else original_sizes[0]
+        plot_height = self.results_splitter.height() - table_height
+        self.results_splitter.setSizes([table_height, plot_height])
+        # ----------------------------------------------------------
         self.plot_label.setText(message)
         self.plot_label.setPixmap(QPixmap()) # Clear any existing pixmap
         self.plot_label.show()
@@ -600,6 +640,12 @@ class QueryWidget(QWidget):
 
     def clear_results(self):
         """Clear the results table and plot"""
+        # --- Reset splitter sizes when clearing ---
+        original_sizes = self.results_splitter.sizes()
+        table_height = int(self.results_splitter.height() * 0.7) if sum(original_sizes) == 0 else original_sizes[0]
+        plot_height = self.results_splitter.height() - table_height
+        self.results_splitter.setSizes([table_height, plot_height])
+        # ----------------------------------------
         self.results_table.setRowCount(0)
         self.results_table.setColumnCount(0)
         self.plot_label.clear()
@@ -1066,7 +1112,6 @@ class ClientGUI(QMainWindow):
     def on_query_result(self, result):
         """Handle results received from the server"""
         logger.info(f"Received query result: {type(result)}")
-        # print(f"DEBUG: Full result received: {result}") # For debugging
 
         if isinstance(result, dict):
             query_type = result.get('query_type', 'unknown') # Get query type if available
@@ -1074,48 +1119,45 @@ class ClientGUI(QMainWindow):
 
             if metadata_type:
                 self.handle_metadata_result(metadata_type, result.get('data', []))
-            elif query_type == 'query3' and 'plot' in result and result['plot']:
-                # Handle plot data specifically for Query 3
+            elif query_type in ['query3', 'query4'] and 'plot' in result and result['plot']:
+                # Handle plot data specifically for Query 3 or Query 4
                 try:
                     image_bytes = result['plot']
-                    # Optional: Decode if base64 encoded (depends on server implementation)
+                    # Optional base64 decode if server sent it encoded (we now send raw bytes from server)
                     # import base64
                     # if isinstance(image_bytes, str):
                     #     image_bytes = base64.b64decode(image_bytes)
-                    
-                    self.query_tab.display_plot(image_bytes, title="Demografische Analyse")
-                    self.statusBar().showMessage("Graph result displayed.", 3000)
+
+                    plot_title = result.get('title', 'Query Result Plot') # Get title from result
+                    self.query_tab.display_plot(image_bytes, title=plot_title) # Pass title
+                    self.statusBar().showMessage("Graph/Heatmap result displayed.", 3000)
                 except Exception as e:
-                    logger.error(f"Error processing plot data for Query 3: {e}")
+                    logger.error(f"Error processing plot data for {query_type}: {e}")
                     self.query_tab.display_error_in_plot_area(f"Error processing plot: {e}")
-                    self.statusBar().showMessage("Error displaying graph.", 5000)
+                    self.statusBar().showMessage("Error displaying plot.", 5000)
             elif 'error' in result:
                  logger.error(f"Query Error from server or client processing: {result['error']}")
                  self.status_bar.showMessage(f"Query Error: {result['error']}", 5000)
                  # Display the specific error in the table
                  self.query_tab.display_results({'data': [[result['error']]], 'headers': ['Error']})
             else:
-                # Handle tabular data for other queries or if Query 3 has no plot
+                # Handle tabular data for other queries or if Query 3/4 has no plot
                 self.query_tab.display_results(result)
 
-                # --- ADD CHECK FOR DATA BEFORE LEN() ---
                 record_count = 0
                 if result.get('data') is not None:
                     try:
                         record_count = len(result['data'])
-                    except TypeError: # Handle if data is not a sequence (shouldn't happen often now)
+                    except TypeError:
                          logger.warning("Could not get length of received data.")
-                         record_count = 'N/A' # Or 1 if it's non-sequence data?
-                # ----------------------------------------
-
+                         record_count = 'N/A'
                 self.status_bar.showMessage(f"Query successful. Displayed {record_count} records.", 3000)
         else:
              logger.error(f"Received unexpected result format: {type(result)}")
              self.statusBar().showMessage("Received unexpected result format from server.", 5000)
-             # Display error in table
              self.query_tab.display_results({'data': [], 'headers': ['Error']})
-             self.query_tab.results_table.setItem(0, 0, QTableWidgetItem("Unexpected result format"))
-             self.query_tab.results_table.setSpan(0, 0, 1, 1)
+             # self.query_tab.results_table.setItem(0, 0, QTableWidgetItem("Unexpected result format")) # This is likely wrong if headers aren't set
+             # self.query_tab.results_table.setSpan(0, 0, 1, 1)
 
     def handle_metadata_result(self, metadata_type, data):
         """Update combo boxes or date edits with metadata received from server"""
@@ -1125,18 +1167,18 @@ class ClientGUI(QMainWindow):
             if not isinstance(data, list):
                  logger.warning(f"Received non-list data for metadata {metadata_type}")
                  return
-            # --- Update BOTH area combo boxes ---
+            # --- Update ONLY Q1 area combo box ---
             area_combo_q1 = self.query_tab.q1_area_combo
-            area_combo_q4 = self.query_tab.q4_area_combo
+            # area_combo_q4 = self.query_tab.q4_area_combo # Remove reference to Q4 combo
             area_combo_q1.clear()
-            area_combo_q4.clear()
+            # area_combo_q4.clear()
             if data:
                 items = [str(item) for item in data]
                 area_combo_q1.addItems(items)
-                area_combo_q4.addItems(items) # Populate Q4 as well
+                # area_combo_q4.addItems(items) # Don't populate Q4 combo
             else:
                 area_combo_q1.addItem("No areas found")
-                area_combo_q4.addItem("No areas found")
+                # area_combo_q4.addItem("No areas found")
             # ------------------------------------
         elif metadata_type == 'charge_groups':
             if not isinstance(data, list):
@@ -1407,21 +1449,22 @@ class ClientGUI(QMainWindow):
                 params['generate_plot'] = True # Explicitly request plot
                 
             elif query_index == 3: # Query 4
-                 params['area_name'] = self.query_tab.q4_area_combo.currentText()
-                 if "Loading areas..." in params['area_name'] or "No areas found" in params['area_name']:
-                      raise ValueError("Please select a valid Centrum Gebied.")
+                 # --- Remove area_name, Add center_lat/lon ---
+                 # params['area_name'] = self.query_tab.q4_area_combo.currentText()
+                 # if "Loading areas..." in params['area_name'] or "No areas found" in params['area_name']:
+                 #      raise ValueError("Please select a valid Centrum Gebied.")
+                 params['center_lat'] = self.query_tab.q4_center_lat_spin.value()
+                 params['center_lon'] = self.query_tab.q4_center_lon_spin.value()
+                 # ---------------------------------------------
 
                  params['radius_km'] = self.query_tab.q4_radius_spin.value()
                  params['start_date'] = self.query_tab.q4_start_date.date().toString(Qt.ISODate)
                  params['end_date'] = self.query_tab.q4_end_date.date().toString(Qt.ISODate)
 
-                 # --- Get selected arrest type (handle "All Types") ---
                  selected_arrest_type = self.query_tab.q4_arrest_type_combo.currentText()
-                 params['arrest_type_code'] = selected_arrest_type if selected_arrest_type != "All Types" else None # Send None for 'All'
-                 # ---------------------------------------------------
+                 params['arrest_type_code'] = selected_arrest_type if selected_arrest_type != "All Types" else None
 
-                 # Note: The server side 'process_query4' expects 'arrest_types' (plural list)
-                 # We are sending 'arrest_type_code' (singular). Need to adjust server.
+                 # Note: Server process_query4 needs adjustment to accept center_lat/lon
             else:
                 QMessageBox.critical(self, "Error", "Invalid query type selected.")
                 return
