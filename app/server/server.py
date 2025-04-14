@@ -49,6 +49,7 @@ class ClientHandler(threading.Thread):
         self.session_id = None
         self.session_start_time = None
         self.connection_lost = False
+        self.was_logged_in = False
         
         # Client message queue (for messages from server to client)
         self.message_queue = queue.Queue()
@@ -58,6 +59,7 @@ class ClientHandler(threading.Thread):
     def run(self):
         """Main thread method"""
         logger.info(f"HANDLER: Thread started for client {self.address}")
+        client_removed_from_list = False
         try:
             # --- SEND WELCOME/CONFIRMATION MESSAGE ---
             try:
@@ -130,13 +132,30 @@ class ClientHandler(threading.Thread):
                         logger.error(f"HANDLER: Error checking/sending message queue for {self.address}: {q_err}", exc_info=True)
                     last_queue_check = current_time
 
+            # --- Remove client from list BEFORE finally block --- 
+            if self.was_logged_in:
+                 try:
+                      logger.debug(f"HANDLER: Removing client {self.address} from server list before cleanup.")
+                      self.server.remove_active_client(self)
+                      client_removed_from_list = True
+                 except Exception as remove_err:
+                      logger.error(f"HANDLER: Error removing client {self.address} from list before cleanup: {remove_err}", exc_info=True)
+            # ---------------------------------------------------
+
             logger.info(f"HANDLER: Exited main loop for client {self.address}. Running state: {self.running}")
 
         except Exception as e:
             logger.error(f"HANDLER: Unhandled exception in handler main try block for {self.address}: {e}", exc_info=True)
+            # Ensure removal if unexpected error occurred while logged in
+            if self.was_logged_in and not client_removed_from_list:
+                 try:
+                      logger.debug(f"HANDLER: Removing client {self.address} from server list after main exception.")
+                      self.server.remove_active_client(self)
+                 except Exception as remove_err:
+                      logger.error(f"HANDLER: Error removing client {self.address} from list after main exception: {remove_err}", exc_info=True)
         finally:
-            logger.info(f"HANDLER: Entering finally block for cleanup of client {self.address}. Logged in: {self.client_info is not None}")
-            self.cleanup()
+            logger.info(f"HANDLER: Entering finally block for cleanup of client {self.address}. Logged in: {self.client_info is not None} / Flag: {self.was_logged_in}")
+            self.cleanup(client_removed_before_cleanup=client_removed_from_list)
     
     def process_message(self, message):
         """Process a message from the client"""
@@ -223,6 +242,7 @@ class ClientHandler(threading.Thread):
                     
                     # Add to active clients
                     self.server.add_active_client(self)
+                    self.was_logged_in = True
                     
                     logger.info(f"Client logged in: {client_info['nickname']} ({client_info['email']})")
                     
@@ -261,9 +281,6 @@ class ClientHandler(threading.Thread):
                 # Log the logout
                 logger.info(f"Client logged out: {self.client_info['nickname']} ({self.client_info['email']})")
                 
-                # Remove from active clients
-                self.server.remove_active_client(self)
-                
                 # Send logout response
                 self.send_response(MSG_LOGOUT, {
                     'status': STATUS_OK,
@@ -276,6 +293,8 @@ class ClientHandler(threading.Thread):
                 # Clear client info
                 self.client_info = None
                 self.session_id = None
+                self.session_start_time = None
+                self.was_logged_in = False
             except Exception as e:
                 logger.error(f"Error during logout: {e}")
                 self.send_error(f"Logout failed: {str(e)}")
@@ -489,7 +508,7 @@ class ClientHandler(threading.Thread):
         except Exception as e:
             logger.error(f"Error processing message queue for {self.address}: {e}", exc_info=True)
     
-    def cleanup(self):
+    def cleanup(self, client_removed_before_cleanup):
         """Clean up resources"""
         if getattr(self, 'cleaned_up', False):
             return
@@ -497,17 +516,22 @@ class ClientHandler(threading.Thread):
         
         logger.info(f"Cleaning up connection for client {self.address}. Connection lost flag: {self.connection_lost}")
         
-        # End session if client was logged in
-        if self.client_info and self.session_id:
+        # End session if client was logged in (still necessary if loop exited unexpectedly)
+        # Use was_logged_in flag as client_info might be None already
+        if self.was_logged_in and self.session_id:
             try:
-                # Session end uses the pool now, no direct connection mgmt needed here
                 self.db.end_session(self.session_id) 
-                logger.info(f"Session ended for {self.client_info['nickname']}")
-                self.server.remove_active_client(self)
-                self.server.log_activity(f"Client disconnected: {self.client_info['nickname']} ({self.client_info['email']})")
+                logger.info(f"Session ended for client ID associated with session {self.session_id}")
+                # Log activity only if not removed before cleanup (to avoid duplicate logs)
+                if not client_removed_before_cleanup:
+                     # Need nickname/email for logging, might need to fetch if self.client_info is None
+                     # For now, log generic message if info is gone
+                     log_msg_client = f"({self.address})" # Fallback identifier
+                     if self.client_info: 
+                          log_msg_client = f"{self.client_info.get('nickname', '?')} ({self.client_info.get('email', '?')})"
+                     self.server.log_activity(f"Client disconnected (cleanup): {log_msg_client}")
             except Exception as e:
-                # Log error, but don't try to disconnect DB here anymore
-                logger.error(f"Error ending session: {e}", exc_info=True)
+                logger.error(f"Error ending session during cleanup: {e}", exc_info=True)
         
         # Close socket only if connection wasn't already lost
         if not self.connection_lost:
