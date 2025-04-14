@@ -6,35 +6,78 @@ import sqlite3
 import datetime
 import pandas as pd
 import threading
+import queue
+import time
 from pathlib import Path
+import logging
+import contextlib
+import json
+
+logger = logging.getLogger(__name__)
+
+# Print SQLite thread safety level on import
+print(f"SQLite3 thread safety level: {sqlite3.threadsafety}")
 
 class Database:
-    """Thread-safe database for storing client information and query history"""
+    """Thread-safe database using a connection pool for storing client info and query history"""
     
-    def __init__(self, db_path='app/server/server_data.db'):
-        """Initialize database connection and create tables if they don't exist"""
+    def __init__(self, db_path='app/server/server_data.db', pool_size=5):
+        """Initialize database pool and create tables if they don't exist"""
         self.db_path = db_path
-        
-        # Thread-local storage for database connections
-        self.local = threading.local()
-        
-        # Lock for thread synchronization
-        self.lock = threading.RLock()
-        
+        self.pool_size = pool_size
+        self._pool = queue.Queue(maxsize=pool_size)
+        self._closed = False # Flag to indicate pool shutdown
+
+        # Lock for initializing/closing the pool safely
+        self._init_lock = threading.Lock()
+
         # Create the directory if it doesn't exist
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         
-        # Perform database migration if needed
+        # Initialize the pool
+        self._initialize_pool()
+
+        # Perform database migration if needed (using a pooled connection)
         self.migrate_database()
         
-        # Create tables using a temporary connection
-        with self.get_connection() as conn:
-            self.create_tables(conn)
-    
+        # Ensure tables exist (using a pooled connection)
+        try:
+            conn = self.get_connection()
+            if conn:
+                self.create_tables(conn)
+        except Exception as e:
+            logger.error(f"Error creating tables during init: {e}", exc_info=True)
+            # Decide if this is fatal? Maybe raise the exception.
+            raise
+        finally:
+            if conn:
+                self.return_connection(conn)
+
+    def _initialize_pool(self):
+        """Populate the connection pool."""
+        with self._init_lock:
+            if self._closed:
+                 raise RuntimeError("Database pool is closed.")
+            logger.info(f"Initializing database connection pool (size {self.pool_size})...")
+            for _ in range(self.pool_size):
+                try:
+                    # Connections in pool must allow sharing across threads
+                    conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                    conn.execute("PRAGMA foreign_keys = ON")
+                    conn.row_factory = sqlite3.Row
+                    self._pool.put(conn)
+                except sqlite3.Error as e:
+                    logger.error(f"Failed to create connection for pool: {e}", exc_info=True)
+                    # Handle error appropriately - maybe raise, maybe try fewer connections?
+                    raise RuntimeError(f"Failed to initialize database pool: {e}") from e
+            logger.info(f"Database connection pool initialized with {self._pool.qsize()} connections.")
+
     def migrate_database(self):
         """Perform necessary database migrations"""
+        # Needs careful handling as pool might not be fully ready
+        conn = None
         try:
-            # Get a connection
+            # Temporarily get a raw connection for migration check before pool might be used
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
@@ -53,31 +96,96 @@ class Database:
                 conn.commit()
                 print("Migrated database: dropped old sessions table")
             
-            # Close the connection
-            conn.close()
+            conn.close() # Close the temporary connection
         except Exception as e:
-            print(f"Error during database migration: {e}")
-            # If migration fails, just continue with normal initialization
-    
+            logger.error(f"Error during database migration check: {e}")
+            if conn:
+                try: conn.close() # Ensure temporary connection is closed on error
+                except: pass
+        # Note: Actual table creation uses the pool via create_tables called from __init__
+
     def get_connection(self):
-        """Get a database connection for the current thread"""
-        if not hasattr(self.local, 'conn') or self.local.conn is None:
-            self.local.conn = sqlite3.connect(self.db_path)
-            # Enable foreign keys
-            self.local.conn.execute("PRAGMA foreign_keys = ON")
-            # Configure connection
-            self.local.conn.row_factory = sqlite3.Row
-        
-        return self.local.conn
-    
-    def disconnect(self):
-        """Disconnect the current thread's database connection"""
-        if hasattr(self.local, 'conn') and self.local.conn is not None:
-            self.local.conn.close()
-            self.local.conn = None
-    
+        """Get a connection from the pool.
+        Blocks until a connection is available, with a timeout.
+        """
+        if self._closed:
+            raise RuntimeError("Database pool is closed.")
+        try:
+            # Wait up to 10 seconds for a connection
+            conn = self._pool.get(block=True, timeout=10)
+            logger.debug(f"Acquired DB connection {id(conn)} from pool (pool size: {self._pool.qsize()})")
+            return conn
+        except queue.Empty:
+            logger.error("Timeout waiting for database connection from pool.")
+            # Depending on policy, could raise error or return None
+            raise TimeoutError("Timeout waiting for database connection from pool.")
+
+    def return_connection(self, conn):
+        """Return a connection to the pool."""
+        if conn is None:
+            return
+        if self._closed:
+            # If pool is closed, just close the connection we got
+            try:
+                conn.close()
+            except Exception as e:
+                 logger.warning(f"Error closing connection {id(conn)} after pool shutdown: {e}", exc_info=True)
+            return
+        try:
+            # Put connection back into the pool. 
+            # Use block=False with check to avoid waiting if pool is somehow full
+            # (shouldn't happen with correct usage but safer)
+            if not self._pool.full():
+                 self._pool.put(conn, block=False)
+                 logger.debug(f"Returned DB connection {id(conn)} to pool (pool size: {self._pool.qsize()})")
+            else:
+                 logger.warning(f"Attempted to return connection {id(conn)} to a full pool. Closing instead.")
+                 try:
+                      conn.close()
+                 except Exception as e:
+                      logger.error(f"Error closing connection {id(conn)} that couldn't be returned to full pool: {e}", exc_info=True)
+        except Exception as e:
+             logger.error(f"Error returning connection {id(conn)} to pool: {e}. Closing connection.", exc_info=True)
+             # Ensure connection is closed if putting back failed
+             try:
+                  conn.close()
+             except Exception as close_e:
+                  logger.error(f"Error closing connection {id(conn)} after failing to return to pool: {close_e}", exc_info=True)
+
+    def close_all_connections(self):
+        """Close all connections in the pool and shut down the pool."""
+        with self._init_lock:
+            if self._closed:
+                return # Already closed
+            logger.info(f"Closing all database connections in the pool ({self._pool.qsize()} connections estimated)...")
+            self._closed = True
+            closed_count = 0
+            while not self._pool.empty():
+                try:
+                    conn = self._pool.get_nowait()
+                    conn.close()
+                    closed_count += 1
+                except queue.Empty:
+                    break # Pool is empty
+                except Exception as e:
+                    logger.error(f"Error closing connection during pool shutdown: {e}", exc_info=True)
+            logger.info(f"Database connection pool shutdown complete. Closed {closed_count} connections.")
+
+    @contextlib.contextmanager
+    def get_connection_context(self):
+         """Context manager for getting and returning a connection."""
+         conn = None
+         try:
+              conn = self.get_connection()
+              yield conn
+         finally:
+              if conn:
+                   self.return_connection(conn)
+
     def create_tables(self, conn):
-        """Create tables if they don't exist"""
+        """Create tables if they don't exist using a provided connection."""
+        # This method now expects a connection to be passed in
+        # It's called from __init__ which handles getting/returning the connection
         cursor = conn.cursor()
         
         # Create clients table
@@ -136,65 +244,63 @@ class Database:
     
     def register_client(self, name, nickname, email, password):
         """Register a new client"""
-        with self.lock:
-            conn = self.get_connection()
+        with self.get_connection_context() as conn:
             cursor = conn.cursor()
-            
             try:
                 cursor.execute("SELECT * FROM clients WHERE nickname = ? OR email = ?", (nickname, email))
                 if cursor.fetchone():
                     return False
-                
                 cursor.execute(
                     "INSERT INTO clients (name, nickname, email, password) VALUES (?, ?, ?, ?)",
                     (name, nickname, email, password)
                 )
                 conn.commit()
                 return True
-            except Exception as e:
+            except sqlite3.Error as e:
+                logger.error(f"DB Error registering client {nickname}: {e}", exc_info=True)
                 conn.rollback()
-                raise e
+                raise  # Re-raise the database error
     
     def check_login(self, email, password):
         """Check login credentials and return client info if valid"""
-        with self.lock:
-            conn = self.get_connection()
+        with self.get_connection_context() as conn:
             cursor = conn.cursor()
-            
             cursor.execute("SELECT * FROM clients WHERE email = ? AND password = ?", (email, password))
             row = cursor.fetchone()
-            
             if row:
-                return {
-                    'id': row['id'],
-                    'name': row['name'],
-                    'nickname': row['nickname'],
-                    'email': row['email'],
-                    'registration_date': row['registration_date']
-                }
+                # Convert row to dict before connection is returned
+                return dict(row)
             else:
                 return None
     
     def start_session(self, client_id, address):
-        """Start a new session for a client"""
-        with self.lock:
-            conn = self.get_connection()
+        """Start a new session for a client and return its ID and start time."""
+        start_time = datetime.datetime.now(datetime.timezone.utc).isoformat() # Record start time
+        session_id = None
+        with self.get_connection_context() as conn:
             cursor = conn.cursor()
-            
-            cursor.execute(
-                "INSERT INTO sessions (client_id, address) VALUES (?, ?)",
-                (client_id, address)
-            )
-            conn.commit()
-            
-            return cursor.lastrowid
+            try:
+                cursor.execute(
+                    "INSERT INTO sessions (client_id, address, start_time) VALUES (?, ?, ?)",
+                    (client_id, address, start_time)
+                )
+                session_id = cursor.lastrowid
+                conn.commit()
+            except sqlite3.Error as e:
+                 logger.error(f"DB Error starting session for client {client_id}: {e}", exc_info=True)
+                 conn.rollback()
+                 raise # Re-raise
+        
+        if session_id:
+             return {'id': session_id, 'start_time': start_time}
+        else:
+             # Handle case where insert somehow failed to return an ID
+             raise Exception(f"Failed to obtain session ID for client {client_id} after insert.")
     
     def end_session(self, session_id):
         """End a session"""
-        with self.lock:
-            conn = self.get_connection()
+        with self.get_connection_context() as conn:
             cursor = conn.cursor()
-            
             cursor.execute(
                 "UPDATE sessions SET end_time = CURRENT_TIMESTAMP WHERE id = ?",
                 (session_id,)
@@ -203,178 +309,99 @@ class Database:
     
     def log_query(self, client_id, session_id, query_type, parameters=None):
         """Log a query"""
-        with self.lock:
-            conn = self.get_connection()
+        parameters_str = json.dumps(parameters) if parameters else None
+        with self.get_connection_context() as conn:
             cursor = conn.cursor()
-            
-            # Convert parameters to JSON string if provided
-            if parameters:
-                import json
-                parameters_str = json.dumps(parameters)
-            else:
-                parameters_str = None
-            
             cursor.execute(
                 "INSERT INTO queries (client_id, session_id, query_type, parameters) VALUES (?, ?, ?, ?)",
                 (client_id, session_id, query_type, parameters_str)
             )
             conn.commit()
-            
             return cursor.lastrowid
     
     def add_message(self, sender_type, sender_id, recipient_type, recipient_id, message):
         """Add a message to the database"""
-        with self.lock:
-            conn = self.get_connection()
+        with self.get_connection_context() as conn:
             cursor = conn.cursor()
-            
             cursor.execute(
                 "INSERT INTO messages (sender_type, sender_id, recipient_type, recipient_id, message) VALUES (?, ?, ?, ?, ?)",
                 (sender_type, sender_id, recipient_type, recipient_id, message)
             )
             conn.commit()
-            
             return cursor.lastrowid
     
     def get_client_by_id(self, client_id):
         """Get client information by ID"""
-        with self.lock:
-            conn = self.get_connection()
+        with self.get_connection_context() as conn:
             cursor = conn.cursor()
-            
             cursor.execute("SELECT * FROM clients WHERE id = ?", (client_id,))
             row = cursor.fetchone()
-            
-            if row:
-                return {
-                    'id': row['id'],
-                    'name': row['name'],
-                    'nickname': row['nickname'],
-                    'email': row['email'],
-                    'registration_date': row['registration_date']
-                }
-            else:
-                return None
+            return dict(row) if row else None
     
     def get_all_clients(self):
-        """Get all registered clients"""
-        with self.lock:
-            conn = self.get_connection()
+        """Get all registered clients including their last login time."""
+        query = """
+            SELECT 
+                c.id, 
+                c.name, 
+                c.nickname, 
+                c.email, 
+                c.registration_date,
+                MAX(s.start_time) as last_login -- Get the latest session start time as last login
+            FROM clients c
+            LEFT JOIN sessions s ON c.id = s.client_id
+            GROUP BY c.id, c.name, c.nickname, c.email, c.registration_date
+            ORDER BY c.registration_date DESC
+        """
+        with self.get_connection_context() as conn:
             cursor = conn.cursor()
-            
-            cursor.execute("SELECT * FROM clients ORDER BY registration_date DESC")
-            rows = cursor.fetchall()
-            
-            clients = []
-            for row in rows:
-                clients.append({
-                    'id': row['id'],
-                    'name': row['name'],
-                    'nickname': row['nickname'],
-                    'email': row['email'],
-                    'registration_date': row['registration_date']
-                })
-            
-            return clients
+            cursor.execute(query)
+            # Convert rows to dicts before connection is returned
+            return [dict(row) for row in cursor.fetchall()]
     
     def get_client_queries(self, client_id):
         """Get all queries for a client"""
-        with self.lock:
-            conn = self.get_connection()
+        with self.get_connection_context() as conn:
             cursor = conn.cursor()
-            
             cursor.execute(
                 "SELECT * FROM queries WHERE client_id = ? ORDER BY timestamp DESC",
                 (client_id,)
             )
-            rows = cursor.fetchall()
-            
-            queries = []
-            for row in rows:
-                queries.append({
-                    'query_id': row['id'],
-                    'client_id': row['client_id'],
-                    'session_id': row['session_id'],
-                    'query_type': row['query_type'],
-                    'parameters': row['parameters'],
-                    'timestamp': row['timestamp']
-                })
-            
-            return queries
+            return [dict(row) for row in cursor.fetchall()]
     
     def get_query_stats(self):
         """Get statistics about queries"""
-        with self.lock:
-            conn = self.get_connection()
+        with self.get_connection_context() as conn:
             cursor = conn.cursor()
-            
             cursor.execute(
                 "SELECT query_type, COUNT(*) as count FROM queries GROUP BY query_type ORDER BY count DESC"
             )
-            rows = cursor.fetchall()
-            
-            stats = []
-            for row in rows:
-                stats.append({
-                    'query_type': row['query_type'],
-                    'count': row['count']
-                })
-            
-            return stats
+            return [dict(row) for row in cursor.fetchall()]
     
     def get_client_by_nickname(self, nickname):
         """Get client by nickname"""
-        with self.lock:
-            conn = self.get_connection()
+        with self.get_connection_context() as conn:
             cursor = conn.cursor()
-            
             cursor.execute("SELECT * FROM clients WHERE nickname = ?", (nickname,))
             row = cursor.fetchone()
-            
-            if row:
-                return {
-                    'id': row['id'],
-                    'name': row['name'],
-                    'nickname': row['nickname'],
-                    'email': row['email'],
-                    'registration_date': row['registration_date']
-                }
-            else:
-                return None
+            return dict(row) if row else None
     
     def get_active_sessions(self):
         """Get all active sessions"""
-        with self.lock:
-            conn = self.get_connection()
+        with self.get_connection_context() as conn:
             cursor = conn.cursor()
-            
             cursor.execute("""
-            SELECT s.id, c.id, c.name, c.nickname, s.start_time, s.address
+            SELECT s.id as session_id, c.id as client_id, c.name, c.nickname, s.start_time as login_time, s.address as ip_address
             FROM sessions s
             JOIN clients c ON s.client_id = c.id
             WHERE s.end_time IS NULL
             """)
-            rows = cursor.fetchall()
-            
-            sessions = []
-            for row in rows:
-                sessions.append({
-                    'session_id': row['id'],
-                    'client_id': row['id'],
-                    'name': row['name'],
-                    'nickname': row['nickname'],
-                    'login_time': row['start_time'],
-                    'ip_address': row['address']
-                })
-            
-            return sessions
+            return [dict(row) for row in cursor.fetchall()]
     
     def get_messages_for_client(self, client_id):
         """Get all unread messages for a client"""
-        with self.lock:
-            conn = self.get_connection()
+        with self.get_connection_context() as conn:
             cursor = conn.cursor()
-            
             cursor.execute("""
             SELECT id, sender_type, sender_id, message, timestamp
             FROM messages
@@ -383,25 +410,11 @@ class Database:
             AND read = 0
             ORDER BY timestamp DESC
             """, (client_id,))
-            rows = cursor.fetchall()
-            
-            messages = []
-            for row in rows:
-                messages.append({
-                    'message_id': row['id'],
-                    'sender_type': row['sender_type'],
-                    'sender_id': row['sender_id'],
-                    'message': row['message'],
-                    'timestamp': row['timestamp']
-                })
-            
-            return messages
+            return [dict(row) for row in cursor.fetchall()]
     
     def mark_message_as_read(self, message_id):
         """Mark a message as read"""
-        with self.lock:
-            conn = self.get_connection()
+        with self.get_connection_context() as conn:
             cursor = conn.cursor()
-            
             cursor.execute("UPDATE messages SET read = 1 WHERE id = ?", (message_id,))
             conn.commit() 

@@ -199,6 +199,20 @@ QStatusBar {
 }
 """
 
+def format_timestamp(ts_str, default="Unknown"):
+    """Helper to format ISO timestamp strings nicely, handling None."""
+    if not ts_str:
+        return default
+    try:
+        # Parse ISO format potentially including timezone
+        dt = datetime.datetime.fromisoformat(ts_str.replace('Z', '+00:00')) 
+        # Convert to local timezone for display
+        local_dt = dt.astimezone()
+        return local_dt.strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        # Fallback for potentially different formats or non-string types
+        return str(ts_str) # Return original string if parsing fails
+
 class ServerGUI(QMainWindow):
     """GUI for the server application using PySide6"""
     
@@ -601,10 +615,7 @@ class ServerGUI(QMainWindow):
     
     def update_active_clients(self):
         """Update the active clients tree"""
-        # Clear the tree
         self.active_clients_tree.clear()
-        
-        # Add active clients
         active_clients = self.server.get_active_clients()
         for client in active_clients:
             item = QTreeWidgetItem([
@@ -612,32 +623,25 @@ class ServerGUI(QMainWindow):
                 client.get("name", "Unknown"),
                 client.get("nickname", "Unknown"),
                 client.get("email", "Unknown"),
-                client.get("connected_since", "Unknown"),
-                client.get("last_activity", "Unknown")
+                format_timestamp(client.get("connected_since")),
+                "N/A"
             ])
             self.active_clients_tree.addTopLevelItem(item)
-            
-        # Update stats label
         self.active_clients_label.setText(str(len(active_clients)))
     
     def update_all_clients(self):
         """Update the all clients tree"""
-        # Clear the tree
         self.all_clients_tree.clear()
-        
-        # Add all clients
         all_clients = self.server.get_all_clients()
         for client in all_clients:
             item = QTreeWidgetItem([
                 client.get("email", "Unknown"),
                 client.get("name", "Unknown"),
                 client.get("nickname", "Unknown"),
-                client.get("last_login", "Never"),
-                client.get("registered", "Unknown")
+                format_timestamp(client.get("last_login"), default="Never"),
+                format_timestamp(client.get("registration_date"))
             ])
             self.all_clients_tree.addTopLevelItem(item)
-            
-        # Update stats labels
         self.total_clients_label.setText(str(len(all_clients)))
         
         # Update active clients count

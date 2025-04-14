@@ -942,13 +942,13 @@ class ClientGUI(QMainWindow):
     def connect_signals(self):
         """Connect signals from UI elements and callbacks bridge"""
         # Connection
-        # self.connect_button.clicked.connect(self.toggle_connection) # <--- REMOVE OR COMMENT OUT THIS LINE
+        # self.connect_button.clicked.connect(self.toggle_connection) # Already connected in setup_ui
         self.callbacks_bridge.connection_status_changed.connect(self.on_connection_status_change)
         
         # Login/Register
-        self.login_widget.login_button.clicked.connect(self.login)
+        # self.login_widget.login_button.clicked.connect(self.login) # REMOVED - Already connected in setup_ui
         self.login_widget.register_button.clicked.connect(self.show_register)
-        self.register_widget.register_button.clicked.connect(self.register)
+        # self.register_widget.register_button.clicked.connect(self.register) # REMOVED - Already connected in setup_ui
         self.register_widget.back_button.clicked.connect(self.show_login)
         self.callbacks_bridge.login_status_changed.connect(self.on_login_status_change)
         

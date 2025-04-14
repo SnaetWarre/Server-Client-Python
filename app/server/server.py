@@ -42,11 +42,13 @@ class ClientHandler(threading.Thread):
         self.socket = client_socket
         self.address = client_address
         self.server = server
-        self.db = server.db  # This is now thread-safe
+        self.db = server.db
         self.data_processor = server.data_processor
         self.running = True
         self.client_info = None
         self.session_id = None
+        self.session_start_time = None
+        self.connection_lost = False
         
         # Client message queue (for messages from server to client)
         self.message_queue = queue.Queue()
@@ -86,6 +88,7 @@ class ClientHandler(threading.Thread):
                     if message is None:
                         logger.info(f"HANDLER: Client {self.address} disconnected (receive_message returned None)")
                         self.running = False
+                        self.connection_lost = True
                         break
 
                     self.process_message(message)
@@ -96,18 +99,28 @@ class ClientHandler(threading.Thread):
                 except ConnectionAbortedError:
                     logger.warning(f"HANDLER: Connection aborted by client {self.address}.")
                     self.running = False
+                    self.connection_lost = True
                     break
                 except ConnectionResetError:
                     logger.warning(f"HANDLER: Connection reset by client {self.address}.")
                     self.running = False
+                    self.connection_lost = True
                     break
                 except BrokenPipeError:
                     logger.warning(f"HANDLER: Broken pipe for client {self.address} (likely disconnected).")
                     self.running = False
+                    self.connection_lost = True
+                    break
+                except (socket.error, OSError) as sock_err: # Catch specific socket/OS errors
+                    logger.error(f"HANDLER: Socket/OS Error for client {self.address}: {sock_err}. Terminating handler.")
+                    self.running = False # Ensure loop termination on socket errors
+                    self.connection_lost = True
                     break
                 except Exception as e:
-                    logger.error(f"HANDLER: Error processing/receiving message from client {self.address}: {e}", exc_info=True)
-                    time.sleep(0.1)
+                    # Log other unexpected errors but allow loop to potentially continue
+                    # if it wasn't a direct socket/connection issue.
+                    logger.error(f"HANDLER: Non-socket error processing/receiving message from client {self.address}: {e}", exc_info=True)
+                    time.sleep(0.1) # Brief pause
 
                 current_time = time.time()
                 if current_time - last_queue_check >= 0.1:
@@ -199,10 +212,14 @@ class ClientHandler(threading.Thread):
                 try:
                     # Start a new session
                     address_str = f"{self.address[0]}:{self.address[1]}"
-                    self.session_id = self.db.start_session(
+                    session_info = self.db.start_session(
                         client_info['id'], 
                         address_str
                     )
+                    self.session_id = session_info.get('id')
+                    self.session_start_time = session_info.get('start_time')
+                    if not self.session_id:
+                        raise Exception("Failed to retrieve session ID after starting session.")
                     
                     # Add to active clients
                     self.server.add_active_client(self)
@@ -293,9 +310,6 @@ class ClientHandler(threading.Thread):
             logger.info(f"Processing query {query_type_id} from {self.client_info['nickname']} with params: {parameters}")
 
             # --- Process the query based on query_type_id ---
-            # You'll need to map 'query1', 'query2' etc. to specific logic
-            # This might involve calling new methods in DataProcessor
-            # Example structure:
             result = {}
             if query_type_id == 'query1':
                  result = self.data_processor.process_query1(parameters)
@@ -477,42 +491,44 @@ class ClientHandler(threading.Thread):
     
     def cleanup(self):
         """Clean up resources"""
-        # Ensure cleanup is only performed once
         if getattr(self, 'cleaned_up', False):
             return
         self.cleaned_up = True
         
-        logger.info(f"Cleaning up connection for client {self.address}")
+        logger.info(f"Cleaning up connection for client {self.address}. Connection lost flag: {self.connection_lost}")
         
         # End session if client was logged in
         if self.client_info and self.session_id:
             try:
-                self.db.end_session(self.session_id)
+                # Session end uses the pool now, no direct connection mgmt needed here
+                self.db.end_session(self.session_id) 
                 logger.info(f"Session ended for {self.client_info['nickname']}")
-                
-                # Remove from active clients
                 self.server.remove_active_client(self)
-                
-                # Log to server activity
                 self.server.log_activity(f"Client disconnected: {self.client_info['nickname']} ({self.client_info['email']})")
             except Exception as e:
-                logger.error(f"Error ending session: {e}")
+                # Log error, but don't try to disconnect DB here anymore
+                logger.error(f"Error ending session: {e}", exc_info=True)
         
-        # Close socket
-        try:
-            if self.socket:
-                self.socket.close()
-                self.socket = None
-        except Exception as e:
-            logger.error(f"Error closing socket: {e}")
+        # Close socket only if connection wasn't already lost
+        if not self.connection_lost:
+            logger.debug(f"CLEANUP [{self.address}]: Connection not marked as lost, attempting to close socket...")
+            try:
+                if self.socket:
+                    self.socket.close()
+                    self.socket = None
+                    logger.debug(f"CLEANUP [{self.address}]: Socket closed cleanly.")
+                else:
+                    logger.debug(f"CLEANUP [{self.address}]: Socket was already None.")
+            except Exception as e:
+                logger.error(f"CLEANUP [{self.address}]: Error closing socket cleanly: {e}")
+        else:
+             logger.debug(f"CLEANUP [{self.address}]: Connection marked as lost, skipping socket close.")
+             # Set socket to None anyway to prevent potential reuse elsewhere if cleanup logic changes
+             self.socket = None 
         
-        # Make sure to release any database resources
-        try:
-            # If the handler has a database instance, ensure it disconnects the thread-local connection
-            if hasattr(self, 'db') and self.db:
-                self.db.disconnect()
-        except Exception as e:
-            logger.error(f"Error disconnecting database: {e}")
+        
+        logger.info(f"CLEANUP [{self.address}]: Cleanup finished.")
+        
 
 
 class Server:
@@ -525,6 +541,7 @@ class Server:
         self.socket = None
         self.running = False
         self.clients = []  # List of active client handlers
+        self.clients_lock = threading.Lock() # ADDED Lock for clients list
         self.db = Database()
         self.data_processor = DataProcessor()
         
@@ -565,32 +582,65 @@ class Server:
     
     def stop(self):
         """Stop the server"""
-        self.running = False
+        logger.info("Server stopping...")
+        self.running = False # Stop accepting new clients
         
         # Disconnect all clients
-        for client in self.clients[:]:  # Copy the list to avoid modification during iteration
+        logger.info(f"Disconnecting clients...")
+        # Create a copy for safe iteration WHILE HOLDING THE LOCK
+        clients_to_stop = []
+        with self.clients_lock:
+            clients_to_stop = list(self.clients)
+            self.clients.clear() # Clear the main list immediately
+
+        threads_to_join = []
+        for client in clients_to_stop:
+            threads_to_join.append(client) # Add thread to list for joining
             try:
-                client.running = False
+                logger.debug(f"Signalling client handler {client.address} to stop.")
+                client.running = False # Signal handler thread to stop
                 if client.socket:
-                    client.socket.close()
+                     logger.debug(f"Shutting down and closing socket for {client.address}.")
+                     # Shut down socket before closing to interrupt blocking calls
+                     client.socket.shutdown(socket.SHUT_RDWR) 
+                     client.socket.close()
+            except (socket.error, OSError) as e:
+                 # Log errors but continue trying to stop other clients
+                 logger.error(f"Socket error stopping client {client.address}: {e}")
             except Exception as e:
-                logger.error(f"Error disconnecting client: {e}")
+                logger.error(f"Error signalling/closing client {client.address}: {e}", exc_info=True)
+
+        # Wait for handler threads to finish
+        logger.info(f"Waiting for {len(threads_to_join)} client handler thread(s) to join...")
+        for thread in threads_to_join:
+             try:
+                  logger.debug(f"Joining thread for {thread.address}...")
+                  thread.join(timeout=1.0) # Wait max 1 second per thread
+                  if thread.is_alive():
+                       logger.warning(f"Thread for {thread.address} did not join within timeout.")
+                  else:
+                       logger.debug(f"Thread for {thread.address} joined successfully.")
+             except Exception as e:
+                  logger.error(f"Error joining thread for {thread.address}: {e}", exc_info=True)
+        logger.info("Finished joining client threads.")
         
         # Close server socket
         if self.socket:
+            logger.info("Closing server socket...")
             try:
                 self.socket.close()
                 self.socket = None
+                logger.info("Server socket closed.")
             except Exception as e:
                 logger.error(f"Error closing server socket: {e}")
         
-        # Clean up database connections
-        try:
-            # Database has its own thread-local connections, so we don't need to
-            # explicitly close them here, but we can log that we're shutting down
-            logger.info("Server database connections will be closed on thread exit")
-        except Exception as e:
-            logger.error(f"Error during database cleanup: {e}")
+        # Close database connections in the pool
+        if hasattr(self, 'db') and self.db:
+            logger.info("Closing database connections...")
+            try:
+                self.db.close_all_connections()
+            except Exception as e:
+                logger.error(f"Error closing database connections: {e}", exc_info=True)
             
         logger.info("Server stopped")
         self.log_activity("Server stopped")
@@ -644,55 +694,68 @@ class Server:
     
     def add_active_client(self, client_handler):
         """Add a client to the active clients list"""
-        if client_handler not in self.clients:
-            self.clients.append(client_handler)
+        with self.clients_lock: # ACQUIRE LOCK
+            if client_handler not in self.clients:
+                self.clients.append(client_handler)
+                logger.info(f"Added client {client_handler.address} to active list (now {len(self.clients)})")
             
-            # Notify GUI if callback is set
-            if self.on_client_list_update:
-                self.on_client_list_update()
+        # Notify GUI if callback is set (outside lock if possible)
+        if self.on_client_list_update:
+            self.on_client_list_update()
     
     def remove_active_client(self, client_handler):
         """Remove a client from the active clients list"""
-        if client_handler in self.clients:
-            self.clients.remove(client_handler)
-            
-            # Notify GUI if callback is set
-            if self.on_client_list_update:
-                self.on_client_list_update()
+        removed = False
+        with self.clients_lock: # ACQUIRE LOCK
+            if client_handler in self.clients:
+                self.clients.remove(client_handler)
+                removed = True
+                logger.info(f"Removed client {client_handler.address} from active list (now {len(self.clients)})")
+        
+        # Notify GUI if callback is set (outside lock if possible)
+        if removed and self.on_client_list_update:
+            self.on_client_list_update()
     
     def get_active_clients(self):
-        """Get list of active clients"""
+        """Get list of active clients including session start time"""
         active_clients = []
-        for client in self.clients:
-            if client.client_info:
-                active_clients.append({
-                    'id': client.client_info['id'],
-                    'nickname': client.client_info['nickname'],
-                    'name': client.client_info['name'],
-                    'email': client.client_info['email'],
-                    'session_id': client.session_id,
-                    'address': f"{client.address[0]}:{client.address[1]}"
-                })
+        with self.clients_lock:
+            for client in list(self.clients):
+                if client.client_info:
+                    client_data = {
+                        'id': client.client_info['id'],
+                        'nickname': client.client_info['nickname'],
+                        'name': client.client_info['name'],
+                        'email': client.client_info['email'],
+                        'session_id': client.session_id,
+                        'address': f"{client.address[0]}:{client.address[1]}",
+                        'connected_since': client.session_start_time
+                    }
+                    active_clients.append(client_data)
         return active_clients
     
     def broadcast_message(self, message_text):
         """Broadcast a message to all connected clients"""
-        if not self.clients:
-            logger.warning("No clients connected, message not sent")
-            return False
-        
-        # Create a message
+        # Create message first
         message = Message(MSG_SERVER_MESSAGE, {
             'timestamp': datetime.now().isoformat(),
             'message': message_text
         })
         
-        # Queue the message for each client
-        for client in self.clients:
-            if client.client_info:  # Only send to logged-in clients
-                client.queue_message(message)
-                
-                # Store the message in the database for each client
+        clients_to_send = []
+        with self.clients_lock: # ACQUIRE LOCK
+             # Get list of clients to send to under lock
+             clients_to_send = [c for c in self.clients if c.client_info] # Create copy
+
+        if not clients_to_send:
+            logger.warning("No clients connected, message not sent")
+            return False
+
+        # Queue the message for each client (outside lock)
+        for client in clients_to_send:
+            client.queue_message(message)
+            # Store the message in the database for each client (DB access is pooled/threadsafe)
+            try:
                 self.db.add_message(
                     sender_type='server',
                     sender_id=0,
@@ -700,25 +763,33 @@ class Server:
                     recipient_id=client.client_info['id'],
                     message=message_text
                 )
+            except Exception as db_err:
+                 logger.error(f"DB Error adding broadcast message for client {client.client_info['id']}: {db_err}", exc_info=True)
         
-        logger.info(f"Broadcast message to {len(self.clients)} clients")
-        self.log_activity(f"Message broadcast to {len(self.clients)} clients: {message_text}")
+        logger.info(f"Broadcast message queued for {len(clients_to_send)} clients")
+        self.log_activity(f"Message broadcast to {len(clients_to_send)} clients: {message_text}")
         return True
     
     def send_message_to_client(self, client_id, message_text):
         """Send a message to a specific client"""
-        for client in self.clients:
-            if client.client_info and client.client_info['id'] == client_id:
-                # Create a message
-                message = Message(MSG_SERVER_MESSAGE, {
-                    'timestamp': datetime.now().isoformat(),
-                    'message': message_text
-                })
-                
-                # Queue the message
-                client.queue_message(message)
-                
-                # Store the message in the database
+        target_client = None
+        with self.clients_lock: # ACQUIRE LOCK
+            # Find client under lock
+            for client in self.clients:
+                if client.client_info and client.client_info['id'] == client_id:
+                    target_client = client
+                    break
+        
+        if target_client:
+            # Create and queue message outside lock
+            message = Message(MSG_SERVER_MESSAGE, {
+                'timestamp': datetime.now().isoformat(),
+                'message': message_text
+            })
+            target_client.queue_message(message)
+            
+            # Store the message in the database (DB access is pooled/threadsafe)
+            try:
                 self.db.add_message(
                     sender_type='server',
                     sender_id=0,
@@ -726,13 +797,16 @@ class Server:
                     recipient_id=client_id,
                     message=message_text
                 )
-                
-                logger.info(f"Message sent to client {client.client_info['nickname']}")
-                self.log_activity(f"Message sent to client {client.client_info['nickname']}: {message_text}")
+                logger.info(f"Message queued for client {target_client.client_info['nickname']}")
+                self.log_activity(f"Message sent to client {target_client.client_info['nickname']}: {message_text}")
                 return True
-        
-        logger.warning(f"Client with ID {client_id} not found or not logged in")
-        return False
+            except Exception as db_err:
+                 logger.error(f"DB Error adding direct message for client {client_id}: {db_err}", exc_info=True)
+                 # Indicate failure if DB log failed?
+                 return False 
+        else:
+            logger.warning(f"Client with ID {client_id} not found or not logged in")
+            return False
     
     def get_client_info(self, client_id):
         """Get client information from database"""
