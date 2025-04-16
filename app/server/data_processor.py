@@ -35,10 +35,8 @@ def add_osm_background(ax, bbox, zoom=13):
         ytile = int((1.0 - log(tan(lat_rad) + (1 / cos(lat_rad))) / pi) / 2.0 * n)
         return (xtile, ytile)
     
-    # Get bbox values
     xmin, ymin, xmax, ymax = bbox
     
-    # Get tile coordinates
     try:
         x1, y1 = deg2num(ymin, xmin, zoom)
         
@@ -54,7 +52,6 @@ def add_osm_background(ax, bbox, zoom=13):
         with urllib.request.urlopen(req) as response:
             img_data = response.read()
         
-        # Display the image with correct extent
         img = plt.imread(io.BytesIO(img_data), format='png')
         ax.imshow(img, extent=[xmin, xmax, ymin, ymax], aspect='equal', alpha=0.7)
         logger.info("Successfully added OSM background map")
@@ -106,12 +103,10 @@ class DataProcessor:
         if self.df is None:
             return {'status': 'error', 'message': 'Dataset not loaded'}
         
-        # Set default parameters if not provided
         if parameters is None:
             parameters = {}
         
         try:
-            # Choose the appropriate query handler
             if query_type == 'age_distribution':
                 return self.get_age_distribution(parameters)
             elif query_type == 'top_charge_groups':
@@ -144,11 +139,9 @@ class DataProcessor:
     
     def get_age_distribution(self, parameters):
         """Get age distribution of arrested individuals"""
-        # Create table result
         age_counts = self.df['Age'].value_counts().sort_index().reset_index()
         age_counts.columns = ['Age', 'Count']
         
-        # Create figure
         fig, ax = plt.subplots(figsize=(10, 6))
         sns.histplot(self.df['Age'], bins=30, kde=True, ax=ax)
         ax.set_title('Age Distribution of Arrested Individuals')
@@ -169,11 +162,9 @@ class DataProcessor:
         n = parameters.get('n', 10)
         n = int(n)
         
-        # Create table result
         top_charges = self.df['Charge Group Description'].value_counts().head(n).reset_index()
         top_charges.columns = ['Charge Group', 'Count']
         
-        # Create figure
         fig, ax = plt.subplots(figsize=(12, 8))
         sns.barplot(x='Count', y='Charge Group', data=top_charges, ax=ax)
         ax.set_title(f'Top {n} Charge Groups')
@@ -194,11 +185,9 @@ class DataProcessor:
         n = parameters.get('n', 15)
         n = int(n)
         
-        # Create table result
         area_counts = self.df['Area Name'].value_counts().head(n).reset_index()
         area_counts.columns = ['Area', 'Count']
         
-        # Create figure
         fig, ax = plt.subplots(figsize=(12, 8))
         sns.barplot(x='Count', y='Area', data=area_counts, ax=ax)
         ax.set_title(f'Top {n} Areas by Number of Arrests')
@@ -215,15 +204,12 @@ class DataProcessor:
     
     def get_arrests_by_time(self, parameters):
         """Get arrests by time of day"""
-        # Check if the hour column exists
         if 'Arrest Hour' not in self.df.columns:
             return {'status': 'error', 'message': 'Arrest Hour column not found in dataset'}
         
-        # Create table result
         hour_counts = self.df['Arrest Hour'].value_counts().sort_index().reset_index()
         hour_counts.columns = ['Hour', 'Count']
         
-        # Create figure
         fig, ax = plt.subplots(figsize=(12, 6))
         sns.barplot(x='Hour', y='Count', data=hour_counts, ax=ax)
         ax.set_title('Arrests by Hour of Day')
@@ -267,7 +253,6 @@ class DataProcessor:
         }
         month_counts['Month Name'] = month_counts['Month'].map(month_names)
         
-        # Create figure
         fig, ax = plt.subplots(figsize=(12, 6))
         sns.barplot(x='Month Name', y='Count', data=month_counts, ax=ax)
         
@@ -292,7 +277,6 @@ class DataProcessor:
         n_areas = int(parameters.get('n_areas', 5))
         n_charges = int(parameters.get('n_charges', 5))
         
-        # Get top areas and charges
         top_areas = self.df['Area Name'].value_counts().head(n_areas).index.tolist()
         top_charges = self.df['Charge Group Description'].value_counts().head(n_charges).index.tolist()
         
@@ -309,7 +293,6 @@ class DataProcessor:
             normalize='index'  # Normalize by row (area) to show percentages
         ) * 100  # Convert to percentage
         
-        # Create figure
         fig, ax = plt.subplots(figsize=(14, 10))
         pivot_data.plot(kind='bar', stacked=True, figsize=(14, 10), colormap='tab10', ax=ax)
         ax.set_title(f'Top {n_charges} Charge Types by Top {n_areas} Areas (Percentage)')
@@ -356,7 +339,6 @@ class DataProcessor:
             age_counts = df_gender['Age Group'].value_counts().sort_index().reset_index()
             age_counts.columns = ['Age Group', 'Count']
             
-            # Create figure - age distribution for selected gender
             fig, ax = plt.subplots(figsize=(10, 8))
             sns.barplot(x='Age Group', y='Count', data=age_counts, ax=ax)
             ax.set_title(f'Age Distribution for {selected_gender_name} Arrests')
@@ -364,7 +346,6 @@ class DataProcessor:
             ax.set_ylabel('Number of Arrests')
             ax.grid(True, axis='y')
             
-            # Create figure 2 - histogram of exact ages
             fig2, ax2 = plt.subplots(figsize=(12, 8))
             sns.histplot(df_gender['Age'], bins=30, kde=True, ax=ax2)
             ax2.set_title(f'Age Distribution Histogram for {selected_gender_name} Arrests')

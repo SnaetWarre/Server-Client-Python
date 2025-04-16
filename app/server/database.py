@@ -31,10 +31,8 @@ class Database:
         # Lock for initializing/closing the pool safely
         self._init_lock = threading.Lock()
 
-        # Create the directory if it doesn't exist
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         
-        # Initialize the pool
         self._initialize_pool()
 
         # Perform database migration if needed (using a pooled connection)
@@ -47,7 +45,6 @@ class Database:
                 self.create_tables(conn)
         except Exception as e:
             logger.error(f"Error creating tables during init: {e}", exc_info=True)
-            # Decide if this is fatal? Maybe raise the exception.
             raise
         finally:
             if conn:
@@ -85,7 +82,6 @@ class Database:
             cursor.execute("PRAGMA table_info(sessions)")
             columns = cursor.fetchall()
             
-            # Get column names
             column_names = [col[1] for col in columns] if columns else []
             
             # If sessions table exists but doesn't have 'address' column
@@ -96,7 +92,7 @@ class Database:
                 conn.commit()
                 print("Migrated database: dropped old sessions table")
             
-            conn.close() # Close the temporary connection
+            conn.close()
         except Exception as e:
             logger.error(f"Error during database migration check: {e}")
             if conn:
@@ -132,7 +128,6 @@ class Database:
                  logger.warning(f"Error closing connection {id(conn)} after pool shutdown: {e}", exc_info=True)
             return
         try:
-            # Put connection back into the pool. 
             # Use block=False with check to avoid waiting if pool is somehow full
             # (shouldn't happen with correct usage but safer)
             if not self._pool.full():
@@ -188,7 +183,6 @@ class Database:
         # It's called from __init__ which handles getting/returning the connection
         cursor = conn.cursor()
         
-        # Create clients table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS clients (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -200,7 +194,6 @@ class Database:
         )
         ''')
         
-        # Create sessions table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -212,7 +205,6 @@ class Database:
         )
         ''')
         
-        # Create queries table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS queries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -226,7 +218,6 @@ class Database:
         )
         ''')
         
-        # Create messages table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

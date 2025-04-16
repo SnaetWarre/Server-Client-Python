@@ -21,7 +21,6 @@ class Message:
         self.data = data if data is not None else {}
     
     def to_json(self):
-        """Convert message to JSON string"""
         msg_dict = {
             'msg_type': self.msg_type,
             'data': self.data
@@ -30,7 +29,6 @@ class Message:
     
     @classmethod
     def from_json(cls, json_str):
-        """Create message from JSON string"""
         msg_dict = json.loads(json_str)
         return cls(msg_dict['msg_type'], msg_dict['data'])
 
@@ -141,10 +139,8 @@ def receive_message(sock):
 
         logger.debug(f"PROTOCOL.RECEIVE: Received {bytes_received} bytes for message body.")
 
-        # Convert bytes to JSON
         msg_json = data.decode('utf-8')
 
-        # Create Message object from JSON
         message = Message.from_json(msg_json)
         logger.debug(f"PROTOCOL.RECEIVE: Successfully received message type {message.msg_type} (socket fileno {fileno}).")
         return message
@@ -178,12 +174,10 @@ def encode_figure(fig):
     import io
     import matplotlib.pyplot as plt
     
-    # Save figure to a bytes buffer
     buf = io.BytesIO()
     fig.savefig(buf, format='png', dpi=100) # Added dpi for controlled size
     buf.seek(0)
     
-    # Encode the buffer as base64
     encoded = base64.b64encode(buf.read()).decode('utf-8')
     plt.close(fig) # Ensure figure is closed to free memory
     return encoded
@@ -192,14 +186,10 @@ def encode_figure(fig):
 def decode_figure(encoded_fig):
     """Decode matplotlib figure after transmission"""
     import io
-    # No need for matplotlib here, just decode
-    # import matplotlib.pyplot as plt
     from PIL import Image
     
-    # Decode the base64 string
     decoded = base64.b64decode(encoded_fig.encode('utf-8'))
     
-    # Create a bytes buffer
     buf = io.BytesIO(decoded)
     
     # Open the image with PIL - GUI will handle displaying the PIL Image

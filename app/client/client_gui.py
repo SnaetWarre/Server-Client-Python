@@ -252,12 +252,10 @@ class LoginWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         
-        # Set up the UI
         self.setup_ui()
     
     def setup_ui(self):
         """Set up the UI for the login widget"""
-        # Main layout
         layout = QVBoxLayout(self)
         
         # Form layout for login fields
@@ -296,54 +294,42 @@ class RegisterWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         
-        # Set up the UI
         self.setup_ui()
     
     def setup_ui(self):
         """Set up the UI for the register widget"""
-        # Main layout
+
         layout = QVBoxLayout(self)
         
-        # Form layout for registration fields
         form_layout = QFormLayout()
         
-        # Name field
         self.name_edit = QLineEdit()
         form_layout.addRow("Name:", self.name_edit)
         
-        # Nickname field
         self.nickname_edit = QLineEdit()
         form_layout.addRow("Nickname:", self.nickname_edit)
         
-        # Email field
         self.email_edit = QLineEdit()
         form_layout.addRow("Email:", self.email_edit)
         
-        # Password field
         self.password_edit = QLineEdit()
         self.password_edit.setEchoMode(QLineEdit.Password)
         form_layout.addRow("Password:", self.password_edit)
         
-        # Confirm password field
         self.confirm_password_edit = QLineEdit()
         self.confirm_password_edit.setEchoMode(QLineEdit.Password)
         form_layout.addRow("Confirm Password:", self.confirm_password_edit)
         
-        # Add form layout to main layout
         layout.addLayout(form_layout)
         
-        # Add some space
         layout.addSpacing(20)
         
-        # Register button
         self.register_button = QPushButton("Register")
         layout.addWidget(self.register_button)
         
-        # Back button
         self.back_button = QPushButton("Back to Login")
         layout.addWidget(self.back_button)
         
-        # Add stretch to push buttons to the top
         layout.addStretch()
 
 
@@ -358,11 +344,9 @@ class QueryWidget(QWidget):
         """Set up the query UI components"""
         layout = QVBoxLayout(self)
         
-        # Query selection and parameters group
         query_group = QGroupBox("Query Parameters")
         query_layout = QVBoxLayout()
 
-        # Query Type Selection
         self.query_type_combo = QComboBox()
         self.query_type_combo.addItems([
             "1: Arrestaties per Gebied en Tijdsperiode",
@@ -373,7 +357,6 @@ class QueryWidget(QWidget):
         query_layout.addWidget(QLabel("Select Query Type:"))
         query_layout.addWidget(self.query_type_combo)
 
-        # Parameter Stack
         self.parameter_stack = QStackedWidget()
         self.parameter_stack.addWidget(self._create_query1_params())
         self.parameter_stack.addWidget(self._create_query2_params())
@@ -387,12 +370,10 @@ class QueryWidget(QWidget):
         query_group.setLayout(query_layout)
         layout.addWidget(query_group)
 
-        # Send query button
         self.send_query_button = QPushButton(QIcon.fromTheme("system-search"), "Send Query")
         self.send_query_button.setFont(QFont("Arial", 10, QFont.Bold))
         layout.addWidget(self.send_query_button)
         
-        # Results area
         results_group = QGroupBox("Query Results")
         results_layout = QVBoxLayout()
         
@@ -409,23 +390,23 @@ class QueryWidget(QWidget):
         self.results_splitter.addWidget(self.results_table)
 
         # Placeholder for plot
-        self.plot_label = FigureLabel() # Use FigureLabel for potential enlargement
+        self.plot_label = FigureLabel() 
         self.plot_label.setAlignment(Qt.AlignCenter)
         self.plot_label.setText("Graph will be displayed here for Query 3")
-        self.plot_label.setMinimumHeight(200) # Ensure it's visible
+        self.plot_label.setMinimumHeight(200) 
         self.plot_label.hide() # Initially hidden
         self.results_splitter.addWidget(self.plot_label)
         
         results_layout.addWidget(self.results_splitter)
         results_group.setLayout(results_layout)
         
-        layout.addWidget(results_group, 1) # Give results area more stretch factor
+        layout.addWidget(results_group, 1) 
 
     def _create_query1_params(self):
         """Create parameter widget for Query 1"""
         widget = QWidget()
         layout = QFormLayout(widget)
-        self.q1_area_combo = QComboBox() # Placeholder - needs population
+        self.q1_area_combo = QComboBox() 
         self.q1_area_combo.addItems(["Loading areas..."])
         self.q1_start_date = QDateEdit(datetime.now().date())
         self.q1_end_date = QDateEdit(datetime.now().date())
@@ -446,11 +427,11 @@ class QueryWidget(QWidget):
         """Create parameter widget for Query 2"""
         widget = QWidget()
         layout = QFormLayout(widget)
-        self.q2_charge_combo = QComboBox() # Placeholder
+        self.q2_charge_combo = QComboBox() 
         self.q2_charge_combo.addItems(["Loading charge types..."])
         self.q2_granularity_combo = QComboBox()
         self.q2_granularity_combo.addItems(["Daily", "Weekly", "Monthly", "Yearly"])
-        self.q2_area_input = QLineEdit() # Simple input for now, comma-separated
+        self.q2_area_input = QLineEdit() 
         self.q2_area_input.setPlaceholderText("Optional: Enter areas separated by commas")
 
         layout.addRow("Arrestatietype:", self.q2_charge_combo)
@@ -467,9 +448,9 @@ class QueryWidget(QWidget):
         sex_layout = QHBoxLayout()
         sex_layout.addWidget(self.q3_sex_m_check)
         sex_layout.addWidget(self.q3_sex_f_check)
-        self.q3_descent_input = QLineEdit() # Simple input for now
+        self.q3_descent_input = QLineEdit() 
         self.q3_descent_input.setPlaceholderText("Enter descent codes separated by commas")
-        self.q3_charge_combo = QComboBox() # Placeholder
+        self.q3_charge_combo = QComboBox() 
         self.q3_charge_combo.addItems(["Optional: Loading charge types..."])
 
         layout.addRow("Geslacht (Sex Code):", sex_layout)
@@ -486,12 +467,12 @@ class QueryWidget(QWidget):
         # --- Add LAT/LON SpinBoxes ---
         self.q4_center_lat_spin = QDoubleSpinBox()
         self.q4_center_lat_spin.setRange(-90.0, 90.0)
-        self.q4_center_lat_spin.setDecimals(6) # Allow more precision
+        self.q4_center_lat_spin.setDecimals(6) 
         self.q4_center_lat_spin.setValue(34.0522) # Example: Default to LA center
 
         self.q4_center_lon_spin = QDoubleSpinBox()
         self.q4_center_lon_spin.setRange(-180.0, 180.0)
-        self.q4_center_lon_spin.setDecimals(6) # Allow more precision
+        self.q4_center_lon_spin.setDecimals(6) 
         self.q4_center_lon_spin.setValue(-118.2437) # Example: Default to LA center
 
         lat_lon_layout = QHBoxLayout()
@@ -511,7 +492,7 @@ class QueryWidget(QWidget):
         self.q4_end_date = QDateEdit(datetime.now().date())
 
         self.q4_arrest_type_combo = QComboBox()
-        self.q4_arrest_type_combo.addItems(["Loading types..."]) # Placeholder
+        self.q4_arrest_type_combo.addItems(["Loading types..."]) 
 
         layout.addRow("Radius:", self.q4_radius_spin)
         layout.addRow("Startdatum:", self.q4_start_date)
@@ -526,13 +507,16 @@ class QueryWidget(QWidget):
         # Default: give table more space initially if we have sizes, else split roughly 70/30
         table_height = int(self.results_splitter.height() * 0.7) if sum(original_sizes) == 0 else original_sizes[0]
         plot_height = self.results_splitter.height() - table_height
-        self.results_splitter.setSizes([table_height, plot_height]) # Adjust as needed
+        self.results_splitter.setSizes([table_height, plot_height]) 
         # ----------------------------------------------
 
         self.results_table.setRowCount(0) # Clear previous results
         self.plot_label.hide() # Hide plot by default
         self.results_table.show() # Show table by default
 
+        # Check if results are empty or invalid
+        # If no results found, display a message in the table
+        # spanning across all columns and exit the function
         if not results or 'data' not in results or not results['data']:
             self.results_table.setRowCount(1)
             no_results_item = QTableWidgetItem("No results found or empty data.")
@@ -559,7 +543,7 @@ class QueryWidget(QWidget):
              item = QTableWidgetItem("Error: Could not determine result headers.")
              item.setTextAlignment(Qt.AlignCenter)
              self.results_table.setItem(0, 0, item)
-             self.results_table.setSpan(0, 0, 1, 1) # Span across one column only
+             self.results_table.setSpan(0, 0, 1, 1) 
              return
 
 
@@ -597,22 +581,16 @@ class QueryWidget(QWidget):
         try:
             pixmap = QPixmap()
             if pixmap.loadFromData(image_bytes):
-                # --- FORCE IMAGE TO FILL 100% OF THE CONTAINER ---
-                # Hide the table completely
                 self.results_table.hide()
                 
-                # Make the plot_label take ALL available space
                 plot_height = self.results_splitter.height()
                 table_height = 0
                 self.results_splitter.setSizes([table_height, plot_height])
                 
-                # Set label to expand fully
                 self.plot_label.setMinimumSize(self.results_splitter.width(), plot_height)
                 
-                # Force pixmap to EXACTLY match label size - NO ASPECT RATIO PRESERVATION
                 self.plot_label.setScaledContents(True)
                 self.plot_label.setPixmap(pixmap)
-                # -----------------------------------------------
                 
                 self.plot_label.original_pixmap = pixmap
                 self.plot_label.setTitle(title)
@@ -627,20 +605,17 @@ class QueryWidget(QWidget):
             
     def display_error_in_plot_area(self, message):
         """Displays an error message in the plot label area"""
-        # --- Reset splitter sizes when showing error in plot area ---
         original_sizes = self.results_splitter.sizes()
         table_height = int(self.results_splitter.height() * 0.7) if sum(original_sizes) == 0 else original_sizes[0]
         plot_height = self.results_splitter.height() - table_height
         self.results_splitter.setSizes([table_height, plot_height])
-        # ----------------------------------------------------------
         self.plot_label.setText(message)
-        self.plot_label.setPixmap(QPixmap()) # Clear any existing pixmap
+        self.plot_label.setPixmap(QPixmap()) 
         self.plot_label.show()
         self.results_table.hide()
 
     def clear_results(self):
         """Clear the results table and plot"""
-        # --- Reset splitter sizes when clearing ---
         original_sizes = self.results_splitter.sizes()
         table_height = int(self.results_splitter.height() * 0.7) if sum(original_sizes) == 0 else original_sizes[0]
         plot_height = self.results_splitter.height() - table_height

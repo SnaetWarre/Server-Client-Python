@@ -688,12 +688,11 @@ class ServerGUI(QMainWindow):
         if selected_items:
             self.client_send_button.setEnabled(True)
             
-            # Get the selected client
             selected_item = selected_items[0]
             client_address = selected_item.text(0)
             client_email = selected_item.text(3)
             
-            # Show client address in message entry placeholder
+            
             self.client_message_entry.setPlaceholderText(f"Send message to {client_email} ({client_address})")
         else:
             self.client_send_button.setEnabled(False)
@@ -706,7 +705,7 @@ class ServerGUI(QMainWindow):
     
     def schedule_updates(self):
         """Schedule updates for dynamic components"""
-        # Only update if the server is running
+        
         if self.server_running:
             self.update_active_clients()
             self.update_all_clients()
@@ -733,11 +732,9 @@ class ServerGUI(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
-    # Load settings to check for initial theme
     settings = QSettings("ArrestDataApp", "Server/AppSettings")
     dark_theme = settings.value("dark_theme", True, type=bool)
     
-    # Apply initial theme before creating the UI
     if dark_theme:
         app.setStyleSheet(DARK_STYLESHEET)
     else:
