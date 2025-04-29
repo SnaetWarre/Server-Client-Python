@@ -36,7 +36,7 @@ print(df.describe())
 # Check for missing values
 print("\nMissing values per column:")
 missing_values = df.isnull().sum()
-missing_percent = (missing_values / len(df)) * 100172.30.20.188
+missing_percent = (missing_values / len(df)) * 100
 missing_info = pd.DataFrame({
     'Missing Values': missing_values,
     'Percentage': missing_percent
