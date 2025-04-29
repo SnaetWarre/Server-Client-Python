@@ -1250,8 +1250,11 @@ class ClientGUI(QMainWindow):
         # Add message to message widget
         self.message_widget.messages_text.append(f"<span style='color:blue'>[SERVER {timestamp}]</span> {message}")
         
-        # Also add to the dedicated server messages area with highlighting
-        self.message_widget.server_messages_text.append(f"<b style='font-size:14px'>[{timestamp}]</b>: <span style='color:darkblue;font-weight:bold'>{message}</span>")
+        # Also add to the dedicated server messages area with highlighting (use a brighter color)
+        self.message_widget.server_messages_text.append(
+            f"<b style='font-size:14px'>[{timestamp}]</b>: "
+            f"<span style='color:#00BFFF;font-weight:bold'>{message}</span>"
+        )
         
         # Scroll to the bottom to ensure visibility for both text areas
         for text_area in [self.message_widget.messages_text, self.message_widget.server_messages_text]:
@@ -1313,7 +1316,10 @@ class ClientGUI(QMainWindow):
                 self.message_widget.messages_text.append(f"<span style='color:blue'>[SERVER {formatted_time}]</span> {message['message']}")
                 
                 # Also add to dedicated server messages area with more visible formatting
-                self.message_widget.server_messages_text.append(f"<b style='font-size:14px'>[{formatted_time}]</b>: <span style='color:darkblue;font-weight:bold'>{message['message']}</span>")
+                self.message_widget.server_messages_text.append(
+                    f"<b style='font-size:14px'>[{formatted_time}]</b>: "
+                    f"<span style='color:#00BFFF;font-weight:bold'>{message['message']}</span>"
+                )
                 
                 # Scroll to the bottom to ensure visibility for both text areas
                 for text_area in [self.message_widget.messages_text, self.message_widget.server_messages_text]:
@@ -1465,11 +1471,25 @@ class ClientGUI(QMainWindow):
     
     def closeEvent(self, event):
         """Called when window is closed"""
-        # Disconnect from server
+        # 1) Disconnect socket and stop the receive-loop
         if self.client.connected:
             self.client.disconnect()
-        
-        # Accept the event
+
+        # 2) Stop our polling timer (if running)
+        self.message_check_timer.stop()
+
+        # 3) Clear out any callbacks so the receive thread can't call into dead objects
+        self.client.on_connection_status_change = None
+        self.client.on_login_status_change = None
+        self.client.on_message_received = None
+        self.client.on_query_result = None
+        self.client.on_error = None
+
+        # 4) Wait briefly for the receive thread to finish
+        if self.client.receiver_thread and self.client.receiver_thread.is_alive():
+            self.client.receiver_thread.join(timeout=1.0)
+
+        # 5) Now accept and let Qt tear down the window safely
         event.accept()
 
     def setup_tab_notification(self, tab_widget, tab_index, original_text):

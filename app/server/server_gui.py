@@ -216,6 +216,10 @@ def format_timestamp(ts_str, default="Unknown"):
 class ServerGUI(QMainWindow):
     """GUI for the server application using PySide6"""
     
+    # Thread-safe Qt signals for cross-thread UI updates
+    activity_log_signal = Signal(str, str)
+    client_list_update_signal = Signal()
+    
     def __init__(self):
         """Initialize the GUI"""
         super().__init__()
@@ -234,9 +238,17 @@ class ServerGUI(QMainWindow):
         # Server instance
         self.server = Server()
         
-        # Register callbacks
-        self.server.on_activity_log = self.on_activity_log
-        self.server.on_client_list_update = self.update_client_list
+        # Hook our Qt signals into the GUI slots
+        self.activity_log_signal.connect(self.on_activity_log)
+        self.client_list_update_signal.connect(self.update_client_list)
+        
+        # Register server callbacks to *emit* Qt signals
+        self.server.on_activity_log = (
+            lambda timestamp, message: self.activity_log_signal.emit(timestamp, message)
+        )
+        self.server.on_client_list_update = (
+            lambda: self.client_list_update_signal.emit()
+        )
         
         # Setup GUI components
         self.setup_gui()
@@ -615,19 +627,42 @@ class ServerGUI(QMainWindow):
     
     def update_active_clients(self):
         """Update the active clients tree"""
+        # 1) Remember which client (address) was selected
+        prev_selected = None
+        sel = self.active_clients_tree.selectedItems()
+        if sel:
+            prev_selected = sel[0].text(0)   # column 0 is the address
+        
+        # 2) Rebuild the tree
         self.active_clients_tree.clear()
         active_clients = self.server.get_active_clients()
+        item_to_restore = None
+        
         for client in active_clients:
+            address = client.get("address", "Unknown")
             item = QTreeWidgetItem([
-                client.get("address", "Unknown"),
-                client.get("name", "Unknown"),
+                address,
+                client.get("name",     "Unknown"),
                 client.get("nickname", "Unknown"),
-                client.get("email", "Unknown"),
+                client.get("email",    "Unknown"),
                 format_timestamp(client.get("connected_since")),
                 "N/A"
             ])
             self.active_clients_tree.addTopLevelItem(item)
+
+            # 3) If this row matches what was selected before, remember it
+            if address == prev_selected:
+                item_to_restore = item
+        
         self.active_clients_label.setText(str(len(active_clients)))
+
+        # 4) Reselect the same client if it still exists
+        if item_to_restore:
+            # block signals briefly so we don't trigger on_client_selected
+            self.active_clients_tree.blockSignals(True)
+            self.active_clients_tree.setCurrentItem(item_to_restore)
+            self.active_clients_tree.blockSignals(False)
+            self.on_client_selected(item_to_restore)
     
     def update_all_clients(self):
         """Update the all clients tree"""

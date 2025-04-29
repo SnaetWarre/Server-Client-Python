@@ -579,6 +579,18 @@ class Server:
     
     def start(self):
         """Start the server"""
+        # If stop() was called earlier we will have closed the DB pool.
+        # Reinitialize it here so logins/queries still work on restart.
+        if getattr(self.db, '_closed', False):
+            try:
+                logger.info("Reinitializing database pool after previous stop()")
+                # Re-create the Database instance (uses same db_path & pool_size)
+                self.db = Database(self.db.db_path, self.db.pool_size)
+            except Exception as e:
+                logger.error(f"Failed to reinitialize database pool: {e}", exc_info=True)
+                self.log_activity(f"Error reinitializing database: {e}")
+                return False
+
         try:
             # Create socket
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
