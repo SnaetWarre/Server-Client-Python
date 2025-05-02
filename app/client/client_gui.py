@@ -390,13 +390,26 @@ class QueryWidget(QWidget):
         self.results_table.verticalHeader().setVisible(False)
         self.results_splitter.addWidget(self.results_table)
 
-        # Placeholder for plot
+        # --- Wrap plot label in a Scroll Area --- 
+        self.plot_scroll_area = QScrollArea()
+        self.plot_scroll_area.setWidgetResizable(True) # Allow widget inside to resize
+        self.plot_scroll_area.setAlignment(Qt.AlignCenter) # Center the widget if smaller
+        self.plot_scroll_area.setStyleSheet("background-color: #1E1E1E;") # Match dark theme bg
+
+        # Placeholder for plot (inside scroll area)
         self.plot_label = FigureLabel() 
         self.plot_label.setAlignment(Qt.AlignCenter)
-        self.plot_label.setText("Graph will be displayed here for Query 3")
-        self.plot_label.setMinimumHeight(200) 
-        self.plot_label.hide() # Initially hidden
-        self.results_splitter.addWidget(self.plot_label)
+        self.plot_label.setText("Graph will be displayed here for Query 3/4")
+        # self.plot_label.setMinimumHeight(200) # Remove minimum height, scroll area handles it
+        # self.plot_label.hide() # Scroll area will be hidden initially
+
+        # Set the label as the widget for the scroll area
+        self.plot_scroll_area.setWidget(self.plot_label)
+        self.plot_scroll_area.hide() # Hide scroll area initially
+        # -----------------------------------------
+
+        # Add the scroll area to the splitter
+        self.results_splitter.addWidget(self.plot_scroll_area)
         
         results_layout.addWidget(self.results_splitter)
         results_group.setLayout(results_layout)
@@ -449,13 +462,16 @@ class QueryWidget(QWidget):
         sex_layout = QHBoxLayout()
         sex_layout.addWidget(self.q3_sex_m_check)
         sex_layout.addWidget(self.q3_sex_f_check)
+
         self.q3_descent_list = QListWidget()
-        self.q3_descent_list.setSelectionMode(QListWidget.MultiSelection)
-        self.q3_charge_combo = QComboBox() 
+        self.q3_descent_list.setMinimumHeight(100) 
+        self.q3_descent_list.setMaximumHeight(200) 
+
+        self.q3_charge_combo = QComboBox()
         self.q3_charge_combo.addItems(["Optional: Loading charge types..."])
 
         layout.addRow("Geslacht (Sex Code):", sex_layout)
-        layout.addRow("Etniciteit (Descent Code):", self.q3_descent_input)
+        layout.addRow("Etniciteit (Descent):", self.q3_descent_list)
         layout.addRow("Arrestatietype (optioneel):", self.q3_charge_combo)
         return widget
 
@@ -512,7 +528,7 @@ class QueryWidget(QWidget):
         # ----------------------------------------------
 
         self.results_table.setRowCount(0) # Clear previous results
-        self.plot_label.hide() # Hide plot by default
+        self.plot_scroll_area.hide() # Hide plot scroll area
         self.results_table.show() # Show table by default
 
         # Check if results are empty or invalid
@@ -583,20 +599,22 @@ class QueryWidget(QWidget):
             pixmap = QPixmap()
             if pixmap.loadFromData(image_bytes):
                 self.results_table.hide()
-                
-                plot_height = self.results_splitter.height()
+                # Reset the plot label size to the pixmap size
+                self.plot_label.setFixedSize(pixmap.size())
+                self.plot_label.setPixmap(pixmap)
+                self.plot_label.setScaledContents(False) # <<< IMPORTANT: Disable scaling
+
+                # Adjust splitter sizes (optional, maybe keep previous split?)
+                plot_height = self.results_splitter.height() # Give plot all space
                 table_height = 0
                 self.results_splitter.setSizes([table_height, plot_height])
                 
-                self.plot_label.setMinimumSize(self.results_splitter.width(), plot_height)
-                
-                self.plot_label.setScaledContents(True)
-                self.plot_label.setPixmap(pixmap)
+                # self.plot_label.setMinimumSize(self.results_splitter.width(), plot_height) # Remove this
                 
                 self.plot_label.original_pixmap = pixmap
                 self.plot_label.setTitle(title)
-                self.plot_label.show()
-                logger.info("Plot displayed successfully as fullscreen image.")
+                self.plot_scroll_area.show() # Show scroll area
+                logger.info("Plot displayed successfully in scroll area.")
             else:
                 logger.error("Failed to load image data into QPixmap.")
                 self.display_error_in_plot_area("Failed to load plot image.")
@@ -612,7 +630,7 @@ class QueryWidget(QWidget):
         self.results_splitter.setSizes([table_height, plot_height])
         self.plot_label.setText(message)
         self.plot_label.setPixmap(QPixmap()) 
-        self.plot_label.show()
+        self.plot_scroll_area.show() # Show scroll area with error message
         self.results_table.hide()
 
     def clear_results(self):
@@ -625,7 +643,7 @@ class QueryWidget(QWidget):
         self.results_table.setRowCount(0)
         self.results_table.setColumnCount(0)
         self.plot_label.clear()
-        self.plot_label.hide()
+        self.plot_scroll_area.hide() # Hide scroll area
         self.results_table.show()
         logger.info("Query results cleared.")
 
@@ -1173,12 +1191,25 @@ class ClientGUI(QMainWindow):
                  q2_charge_combo.addItem("No charge types found")
                  q3_charge_combo.addItem("No charge types found")
         elif metadata_type == 'descent_codes':
-            if not isinstance(data, list):
-                 logger.warning(f"Received non-list data for metadata {metadata_type}")
-                 return
-            # For descent codes, inform the user via placeholder
-            descent_codes_str = ", ".join([str(item) for item in data]) if data else "None available"
-            self.query_tab.q3_descent_input.setPlaceholderText(f"Available: {descent_codes_str}. Enter comma-separated.")
+            list_widget = self.query_tab.q3_descent_list
+            list_widget.clear() 
+            if isinstance(data, list) and data:
+                for item_data in data:
+                    if isinstance(item_data, dict):
+                        code = item_data.get('code')
+                        desc = item_data.get('description', code) 
+                        if code:
+                             list_item = QListWidgetItem(f"{desc} ({code})")
+                             list_item.setData(Qt.UserRole, code)
+                             list_item.setFlags(list_item.flags() | Qt.ItemIsUserCheckable)
+                             list_item.setCheckState(Qt.Unchecked)
+                             list_widget.addItem(list_item)
+                    else:
+                        logger.warning(f"Ignoring invalid item format in descent_codes metadata: {item_data}")
+            else:
+                 list_item = QListWidgetItem("No descent codes available")
+                 list_item.setFlags(list_item.flags() & ~Qt.ItemIsEnabled) 
+                 list_widget.addItem(list_item)
         elif metadata_type == 'date_range':
              if not isinstance(data, dict):
                   logger.warning(f"Received non-dict data for metadata {metadata_type}")
