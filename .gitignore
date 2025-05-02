@@ -26,3 +26,6 @@
 
 app/shared/__pycache__/protocol.cpython-312.pyc
 app/shared/__pycache__/constants.cpython-312.pyc
+app/shared/__pycache__/protocol.cpython-310.pyc
+app/shared/__pycache__/constants.cpython-310.pyc
+app/server/server_data.db-shm

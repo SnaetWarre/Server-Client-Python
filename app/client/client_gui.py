@@ -10,7 +10,8 @@ from PIL import Image, ImageQt
 import io
 import re # Import re module
 import webbrowser 
-import tempfile 
+import tempfile
+from pathlib import Path # <--- ADD THIS IMPORT
 
 # Add the parent directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -32,13 +33,15 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QPixmap, QFont, QIcon, QPalette, QColor
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QSettings, QDate
 
-# Set up logging
+# --- Configure GUI logging to file ---
+TEMP_DIR_GUI = tempfile.gettempdir()
+CLIENT_GUI_LOG_FILE = os.path.join(TEMP_DIR_GUI, 'client_gui_temp.log')
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
+    filename=CLIENT_GUI_LOG_FILE, # <-- Log to file
+    filemode='w'                  # <-- Overwrite file each time
+    # handlers=[ ... ]          # <-- Remove console handler
 )
 logger = logging.getLogger('client_gui')
 
@@ -1109,80 +1112,103 @@ class ClientGUI(QMainWindow):
         """Handle results received from the server"""
         logger.info(f"Received query result: {type(result)}")
 
+        # --- VERY IMPORTANT: Log the received dictionary keys ---
         if isinstance(result, dict):
-            query_type = result.get('query_type', 'unknown')
-            metadata_type = result.get('metadata_type')
-            map_filepath = result.get('map_filepath') # <<< Get map FILEPATH
-
-            if metadata_type:
-                self.handle_metadata_result(metadata_type, result.get('data', []))
-            elif map_filepath: # <<< Check if map filepath is present
-                try:
-                    # --- Handle Local HTML Map File --- 
-                    # Path received from server IS the absolute path
-                    real_path = map_filepath 
-                    if not os.path.exists(real_path):
-                         logger.error(f"Map file path received from server does not exist: {real_path}")
-                         QMessageBox.critical(self, "Map Error", f"Received map path does not exist:\n{real_path}")
-                         self.query_tab.display_results(result) # Display table data as fallback
-                         return
-                         
-                    # Construct file URI
-                    # On Linux/macOS, need file:// prefix. On Windows, just the path might work, 
-                    # but file:// should be more robust.
-                    if sys.platform == 'win32':
-                        file_uri = f'file:///{real_path.replace("\\", "/")}' # Need triple slash for Windows
-                    else:
-                        file_uri = f'file://{real_path}'
-                    logger.info(f"Attempting to open local map file at URI: {file_uri}") 
-                    
-                    # Open the local file in the default web browser
-                    try:
-                        success = webbrowser.open(file_uri)
-                        if success:
-                             logger.info("webbrowser.open() call successful.")
-                             self.statusBar().showMessage("Opening interactive map in browser...", 3000)
-                        else:
-                             logger.warning("webbrowser.open() returned False. Browser might not have opened.")
-                             QMessageBox.warning(self, "Map Info", f"Attempted to open map, but the browser might not have launched automatically.\n\nPlease try opening the file manually:\n{real_path}")
-                             self.statusBar().showMessage("Map generated, check file path.", 5000)
-                    except webbrowser.Error as wb_err:
-                         logger.error(f"webbrowser.Error opening map: {wb_err}", exc_info=True)
-                         QMessageBox.critical(self, "Map Error", f"Could not open interactive map due to a browser error: {wb_err}")
-                         self.statusBar().showMessage("Error opening map (webbrowser error).", 5000)
-
-                    # Hide the internal plot area
-                    self.query_tab.plot_scroll_area.hide()
-                    self.query_tab.results_table.show() 
-                    # --- End Handle Local HTML Map File ---
-                except Exception as e:
-                    logger.error(f"Error handling map filepath: {e}", exc_info=True)
-                    QMessageBox.critical(self, "Map Error", f"Could not process map filepath: {e}")
-                    self.statusBar().showMessage("Error handling map path.", 5000)
-                    self.query_tab.display_results(result) 
-            
-            elif 'error' in result:
-                 logger.error(f"Query Error from server or client processing: {result['error']}")
-                 self.status_bar.showMessage(f"Query Error: {result['error']}", 5000)
-                 self.query_tab.display_results({'data': [[result['error']]], 'headers': ['Error']})
-            else:
-                # Handle tabular data for other queries or if Query 3/4 has no plot
-                self.query_tab.display_results(result)
-
-                record_count = 0
-                if result.get('data') is not None:
-                    try:
-                        record_count = len(result['data'])
-                    except TypeError:
-                        logger.warning("Could not get length of received data.")
-                        record_count = 'N/A'
-                self.status_bar.showMessage(f"Query successful. Displayed {record_count} records.", 3000)
+            logger.info(f"ON_QUERY_RESULT: Received dictionary keys: {list(result.keys())}")
         else:
-             logger.error(f"Received unexpected result format: {type(result)}")
-             self.statusBar().showMessage("Received unexpected result format from server.", 5000)
-             self.query_tab.display_results({'data': [], 'headers': ['Error']})
-             # self.query_tab.results_table.setItem(0, 0, QTableWidgetItem("Unexpected result format")) # This is likely wrong if headers aren't set
-             # self.query_tab.results_table.setSpan(0, 0, 1, 1)
+            logger.warning("ON_QUERY_RESULT: Received result is not a dictionary.")
+            self.statusBar().showMessage("Received unexpected result format from server.", 5000)
+            self.query_tab.display_results({'data': [], 'headers': ['Error']})
+            return # Exit early if not a dict
+        # --------------------------------------------------------
+
+        # Now we know result is a dict
+        query_type = result.get('query_type', 'unknown')
+        metadata_type = result.get('metadata_type')
+
+        # --- Explicit check for map_filepath EXISTENCE and log entry ---
+        if 'map_filepath' in result and result['map_filepath'] is not None:
+            map_filepath = result['map_filepath']
+            logger.info(f"ON_QUERY_RESULT: 'map_filepath' key FOUND. Entering map handling block.")
+            try:
+                # --- Handle Local HTML Map File --- 
+                real_path = map_filepath 
+                if not os.path.exists(real_path):
+                    logger.error(f"Map file path received from server does not exist: {real_path}")
+                    QMessageBox.critical(self, "Map Error", f"Received map path does not exist:\n{real_path}")
+                    self.query_tab.display_results(result) # Display table data as fallback
+                    return
+                    
+                # Construct file URI using pathlib
+                file_uri = None # Initialize
+                try:
+                    file_uri = Path(real_path).as_uri()
+                    logger.info(f"Constructed file URI: {file_uri}") # Add log here
+                except Exception as path_err:
+                    logger.error(f"Error converting path to URI: {real_path} - {path_err}", exc_info=True)
+                    QMessageBox.critical(self, "Map Error", f"Could not create URI for map path: {real_path} - Error: {path_err}")  
+                    self.query_tab.display_results(result) # Fallback
+                    return
+
+                logger.info(f"Attempting to open local map file at URI: {file_uri}") 
+                
+                # --- Open the local file in the default web browser ---
+                browser_opened = False
+                if file_uri: # Only attempt if URI construction succeeded
+                    try:
+                        browser_opened = webbrowser.open(file_uri) # Store the return value
+                        if browser_opened:
+                                logger.info("webbrowser.open() call successful (returned True).")
+                                self.statusBar().showMessage("Opening interactive map in browser...", 3000)
+                        else:
+                                logger.warning("webbrowser.open() returned False. Browser might not have opened automatically.")
+                                QMessageBox.warning(self, "Map Info", f"Attempted to open map, but the browser might not have launched automatically.\n\nPlease try opening the file manually:\n{real_path}")
+                                self.statusBar().showMessage("Map generated, but browser may not open automatically. Check file path.", 5000)
+                    except webbrowser.Error as wb_err:
+                            logger.error(f"webbrowser.Error opening map URI {file_uri}: {wb_err}", exc_info=True)
+                            QMessageBox.critical(self, "Map Error", f"Could not open interactive map due to a browser error: {wb_err}\n\nFile saved at:\n{real_path}")
+                            self.statusBar().showMessage("Error opening map (webbrowser error).", 5000)
+                    except Exception as open_err: # Catch any other unexpected error during open
+                            logger.error(f"Unexpected error opening map URI {file_uri}: {open_err}", exc_info=True)
+                            QMessageBox.critical(self, "Map Error", f"An unexpected error occurred trying to open the map: {open_err}\n\nFile saved at:\n{real_path}")
+                            self.statusBar().showMessage("Unexpected error opening map.", 5000)
+
+                # --- Fallback/UI update logic ---
+                # Display table data always for context
+                logger.info("Displaying table data alongside attempting map open.")
+                self.query_tab.display_results(result) # Display table results regardless
+                self.query_tab.plot_scroll_area.hide() # Ensure plot area is hidden
+                self.query_tab.results_table.show() 
+                # --------------------------------
+
+            except Exception as e: # Catch errors within the map handling block
+                logger.error(f"Error handling map filepath processing: {e}", exc_info=True)
+                QMessageBox.critical(self, "Map Error", f"Could not process map filepath: {e}")
+                self.statusBar().showMessage("Error handling map path.", 5000)
+                self.query_tab.display_results(result) # Fallback to showing table data on error
+
+        # --- Continue with other checks AFTER map check ---
+        elif metadata_type:
+            self.handle_metadata_result(metadata_type, result.get('data', []))
+        
+        elif 'error' in result:
+            logger.error(f"Query Error from server or client processing: {result['error']}")
+            self.status_bar.showMessage(f"Query Error: {result['error']}", 5000)
+            self.query_tab.display_results({'data': [[result['error']]], 'headers': ['Error']})
+        
+        else:
+            # Handle regular tabular data (if no map path, no metadata, no error)
+            logger.info("ON_QUERY_RESULT: No map_filepath found, processing as regular data.")
+            self.query_tab.display_results(result)
+
+            record_count = 0
+            if result.get('data') is not None:
+                try:
+                    record_count = len(result['data'])
+                except TypeError:
+                    logger.warning("Could not get length of received data.")
+                    record_count = 'N/A'
+            self.status_bar.showMessage(f"Query successful. Displayed {record_count} records.", 3000)
 
     def handle_metadata_result(self, metadata_type, data):
         """Update combo boxes or date edits with metadata received from server"""

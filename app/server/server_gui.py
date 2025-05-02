@@ -6,6 +6,8 @@ import sys
 import threading
 import time
 import datetime
+import tempfile
+import logging
 
 # Add the parent directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -198,6 +200,18 @@ QStatusBar {
     color: white;
 }
 """
+
+# --- Configure GUI logging to file ---
+TEMP_DIR_GUI = tempfile.gettempdir()
+SERVER_GUI_LOG_FILE = os.path.join(TEMP_DIR_GUI, 'server_gui_temp.log')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    filename=SERVER_GUI_LOG_FILE, # <-- Log to file
+    filemode='w'                  # <-- Overwrite file each time
+    # handlers=[ ... ]          # <-- Remove console handler
+)
+logger = logging.getLogger('server_gui')
 
 def format_timestamp(ts_str, default="Unknown"):
     """Helper to format ISO timestamp strings nicely, handling None."""

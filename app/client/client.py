@@ -12,6 +12,7 @@ from datetime import datetime
 import struct
 import json
 import base64
+import tempfile
 
 # Add the parent directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -20,13 +21,15 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from shared.constants import *
 from shared.protocol import Message, send_message, receive_message, decode_dataframe, decode_figure
 
-# Set up logging
+# --- Configure logging to file ---
+TEMP_DIR = tempfile.gettempdir()
+CLIENT_LOG_FILE = os.path.join(TEMP_DIR, 'client_temp.log')
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
+    filename=CLIENT_LOG_FILE, # <-- Log to file
+    filemode='w'              # <-- Overwrite file each time
+    # handlers=[ ... ] # <-- Remove console handler
 )
 logger = logging.getLogger('client')
 
@@ -218,7 +221,40 @@ class Client:
             elif message.msg_type == MSG_REGISTER:
                 self.handle_register_response(message.data)
             elif message.msg_type == MSG_QUERY_RESULT:
-                self.handle_query_result(message.data)
+                # Decode data/plot *before* calling the GUI callback
+                processed_data = message.data.copy() # Start with a copy
+                encoded_df_data = processed_data.get('data')
+                encoded_plot_data = processed_data.get('plot')
+
+                if isinstance(encoded_df_data, str):
+                    try:
+                        processed_data['data'] = decode_dataframe(encoded_df_data)
+                        logger.debug("PROCESS_MESSAGE: Decoded dataframe successfully.")
+                    except Exception as e:
+                        logger.error(f"PROCESS_MESSAGE: Error decoding dataframe: {e}", exc_info=True)
+                        processed_data['data'] = [] # Replace with empty list on error
+                        processed_data['error'] = processed_data.get('error', '') + f" Client error: Failed to decode results ({e})"
+                
+                if isinstance(encoded_plot_data, str):
+                    try:
+                        # Decode base64 string to bytes for display
+                        processed_data['plot'] = base64.b64decode(encoded_plot_data.encode('utf-8'))
+                        logger.debug("PROCESS_MESSAGE: Decoded plot data successfully.")
+                    except Exception as e:
+                        logger.error(f"PROCESS_MESSAGE: Error decoding plot data: {e}", exc_info=True)
+                        processed_data['plot'] = None # Set plot to None on error
+                        processed_data['error'] = processed_data.get('error', '') + f" Client error: Failed to decode plot ({e})"
+
+                # Now call the callback with the *processed* data
+                if self.on_query_result:
+                    logger.info(f"PROCESS_MESSAGE (Query Result): Calling on_query_result callback. Processed keys: {list(processed_data.keys())}")
+                    self.on_query_result(processed_data)
+                
+                # Log success using original (or processed) data for context
+                query_type = processed_data.get('query_type', 'unknown')
+                metadata_type = processed_data.get('metadata_type', 'N/A')
+                log_identifier = metadata_type if metadata_type != 'N/A' else query_type
+                logger.info(f"Received successful query/metadata result for {log_identifier}")
             elif message.msg_type == MSG_SERVER_MESSAGE:
                 self.handle_server_message(message.data)
             elif message.msg_type == 'ERROR':
@@ -340,86 +376,6 @@ class Client:
                 'timestamp': datetime.now().isoformat(),
                 'message': f"Registration failed: {error_message}"
             })
-    
-    def handle_query_result(self, data):
-        """Handle query result from the server"""
-        status = data.get('status')
-
-        if status == STATUS_OK:
-            query_type = data.get('query_type')
-            query_id = data.get('query_id')
-            title = data.get('title', 'Query Results')
-            metadata_type = data.get('metadata_type') # Check if it's metadata
-
-            # Prepare result dictionary for the GUI callback
-            result = {
-                'query_type': query_type,
-                'query_id': query_id,
-                'title': title,
-                'metadata_type': metadata_type, # Pass metadata type along
-                'data': None, # Initialize data as None
-                'headers': data.get('headers'), # Pass headers if they exist
-                'plot': None # Initialize plot as None
-            }
-
-            # --- ADJUST DECODING LOGIC ---
-            # Decode dataframe ONLY if present and is a string (encoded)
-            encoded_data = data.get('data')
-            if isinstance(encoded_data, str): # Check if it's the encoded string
-                try:
-                    result['data'] = decode_dataframe(encoded_data)
-                    logger.debug("Successfully decoded dataframe.")
-                except Exception as e:
-                    logger.error(f"Error decoding dataframe: {e}", exc_info=True)
-                    result['data'] = None # Ensure data is None on decoding error
-                    result['error'] = f"Client error: Failed to decode results ({e})" # Add error info
-            elif encoded_data is not None:
-                 # If data exists but isn't a string, it might be metadata (list/dict)
-                 # Or an unexpected format. Assign it directly for metadata handling.
-                 logger.debug(f"Received non-string data (likely metadata or unexpected format): {type(encoded_data)}")
-                 result['data'] = encoded_data
-
-            # Decode plot if present (assuming it's base64 encoded string)
-            encoded_plot = data.get('plot')
-            if isinstance(encoded_plot, str):
-                try:
-                    # Decode base64 string to bytes for display
-                    result['plot'] = base64.b64decode(encoded_plot.encode('utf-8'))
-                    logger.debug("Successfully decoded plot data.")
-                except Exception as e:
-                    logger.error(f"Error decoding plot data: {e}", exc_info=True)
-                    result['plot'] = None # Ensure plot is None on error
-                    # Optionally add to error message
-                    result['error'] = result.get('error', '') + f" Client error: Failed to decode plot ({e})"
-
-            # --- END ADJUST DECODING LOGIC ---
-
-            # Notify GUI if callback is set
-            if self.on_query_result:
-                self.on_query_result(result) # Pass the processed result dict
-
-            log_msg_suffix = f"for {query_type}" if query_type else f"for metadata {metadata_type}"
-            logger.info(f"Received successful query/metadata result {log_msg_suffix}")
-
-            # Add to message queue (optional)
-            # ...
-
-        else: # status != STATUS_OK
-            error_message = data.get('message', 'Query failed')
-            result = {'error': error_message} # Ensure error is passed to GUI
-
-            # Notify GUI callback for error display
-            if self.on_query_result:
-                 self.on_query_result(result) # Pass error result to GUI handler
-
-            # Notify error callback as well
-            if self.on_error:
-                self.on_error(error_message)
-
-            logger.error(f"Query/Metadata failed on server: {error_message}")
-
-            # Add to message queue (optional)
-            # ...
     
     def handle_server_message(self, data):
         """Handle server message"""

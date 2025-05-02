@@ -13,6 +13,7 @@ from datetime import datetime
 import sqlite3
 import base64
 import re # Import re module
+import tempfile # <-- Add tempfile import
 
 # Add the parent directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -25,13 +26,15 @@ from shared.protocol import Message, send_message, receive_message, encode_dataf
 from .database import Database
 from .data_processor import DataProcessor
 
-# Set up logging
+# --- Configure logging to file ---
+TEMP_DIR = tempfile.gettempdir()
+SERVER_LOG_FILE = os.path.join(TEMP_DIR, 'server_temp.log')
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
+    filename=SERVER_LOG_FILE, # <-- Log to file
+    filemode='w'              # <-- Overwrite file each time
+    # handlers=[ ... ] # <-- Remove console handler
 )
 logger = logging.getLogger('server')
 
@@ -351,42 +354,58 @@ class ClientHandler(threading.Thread):
                  self.send_error(f"Query failed: Unknown query type identifier: {query_type_id}")
                  return
 
-            # ------------------------------------------------
+            # --- Log the raw result from processor --- 
+            logger.info(f"HANDLE_QUERY: Result received from processor ({query_type_id}): {result.get('status')}, map_path_present={result.get('map_filepath') is not None}")
+            # For debugging, log the first few keys if it's complex
+            if isinstance(result, dict):
+                keys_sample = list(result.keys())[:5] # Show first 5 keys
+                logger.debug(f"HANDLE_QUERY: Result keys sample: {keys_sample}")
+            # ----------------------------------------
 
             if result.get('status') == 'error':
                 logger.error(f"Query {query_type_id} error: {result.get('message')}")
                 self.send_error(f"Query failed: {result.get('message')}")
                 return
 
-            # Prepare response data
+            # Prepare response data - START MINIMAL
             response_data = {
                 'status': STATUS_OK,
                 'query_id': query_id,
                 'query_type': query_type_id,
                 'title': result.get('title', f'{query_type_id} Results'),
                 'message': "Query successful"
+                # Intentionally leave out data/headers/map/plot initially
             }
 
-            # Add data/headers if present
+            # Add data/headers ONLY if they exist in the processor result
             if 'data' in result and result['data'] is not None:
                  try:
-                      response_data['data'] = encode_dataframe(result['data']) 
+                      response_data['data'] = encode_dataframe(result['data'])
                  except Exception as enc_err:
                       logger.error(f"Failed to encode dataframe for query {query_type_id}: {enc_err}", exc_info=True)
-                      # Send error instead if encoding fails
                       self.send_error(f"Server error: Failed to prepare query results.")
-                      return # Stop processing this query
+                      return
             if 'headers' in result:
-                 response_data['headers'] = result['headers'] # Headers are usually simple lists, no encoding needed
+                 response_data['headers'] = result['headers']
 
-            # --- ADD map_filepath if present --- 
+            # Add map_filepath ONLY if it exists in the processor result
             if 'map_filepath' in result and result['map_filepath'] is not None:
-                 response_data['map_filepath'] = result['map_filepath'] 
-            # ------------------------------------
+                 response_data['map_filepath'] = result['map_filepath']
+                 # Ensure no conflicting keys are present
+                 response_data.pop('plot', None) 
+                 response_data.pop('metadata_type', None)
+            # Add plot ONLY if it exists (e.g., for Query 3) AND map_filepath is NOT present
+            elif 'plot' in result and result['plot'] is not None:
+                 response_data['plot'] = encode_figure(result['plot']) # Assume encode_figure handles bytes
+                 # Ensure no conflicting keys are present
+                 response_data.pop('map_filepath', None)
+                 response_data.pop('metadata_type', None)
 
-            # Remove old plot logic if any remnants exist
-            # if 'plot' in result and result['plot'] is not None: ...
-            
+            # --- Log the response data being sent --- 
+            logger.info(f"HANDLE_QUERY: Sending response_data to client. Map path included: {response_data.get('map_filepath') is not None}")
+            logger.debug(f"HANDLE_QUERY: response_data keys: {list(response_data.keys())}")
+            # ---------------------------------------
+
             # Send response
             self.send_response(MSG_QUERY_RESULT, response_data)
 

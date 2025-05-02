@@ -21,6 +21,7 @@ from datetime import datetime
 # import urllib.request # No longer needed for OSM background
 from math import log, tan, pi, cos, sinh, atan
 import uuid # For unique filenames
+import tempfile # <-- ADD IMPORT
 
 # Set the style for visualizations
 # plt.style.use('seaborn-v0_8-darkgrid') # Keep for other plots
@@ -30,12 +31,6 @@ logger = logging.getLogger('data_processor')
 
 # Import the mapping
 from shared.constants import DESCENT_CODE_MAP
-
-# Define a directory for temporary maps relative to the script location
-# Adjust path as necessary, e.g., create it outside the app folder if preferred
-TEMP_MAP_DIR = os.path.join(os.path.dirname(__file__), 'temp_maps')
-# Ensure the directory exists
-os.makedirs(TEMP_MAP_DIR, exist_ok=True)
 
 def add_osm_background(ax, bbox, zoom=13):
     """Add OpenStreetMap background to plot using matplotlib"""
@@ -985,13 +980,14 @@ class DataProcessor:
                             ).add_to(marker_cluster) # <<< Add to cluster, not map `m`
                             # --------------------------------
 
-                        # --- Save map to a unique temporary file --- 
+                        # --- Save map to a unique temporary file in SYSTEM temp dir ---
                         map_basename = f"map-{uuid.uuid4()}.html"
-                        # Get the absolute path
-                        map_filepath_abs = os.path.abspath(os.path.join(TEMP_MAP_DIR, map_basename))
+                        # Get the system temporary directory
+                        system_temp_dir = tempfile.gettempdir()
+                        # Get the absolute path within the system temp dir
+                        map_filepath_abs = os.path.abspath(os.path.join(system_temp_dir, map_basename))
                         m.save(map_filepath_abs)
-                        # map_filename = map_basename # No longer need just basename
-                        # -------------------------------------------
+                        # -----------------------------------------------------------
                         
                         logger.info(f"Query 4: Folium map with {len(df_to_plot)} markers saved to {map_filepath_abs}.")
 
@@ -1017,6 +1013,10 @@ class DataProcessor:
             if 'distance_km' in result_df.columns: result_df['distance_km'] = result_df['distance_km'].round(2)
             data = result_df.to_dict(orient='records')
             headers = output_cols
+
+            # --- ADD LOGGING BEFORE RETURN ---
+            logger.info(f"PROCESSOR_QUERY4: Returning map_filepath: {map_filepath_abs}")
+            # ----------------------------------
 
             # Return data AND map FILEPATH
             return {'status': 'OK', 'data': data, 'headers': headers, 'map_filepath': map_filepath_abs, 'title': final_title}
