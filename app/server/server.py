@@ -367,29 +367,26 @@ class ClientHandler(threading.Thread):
                 'message': "Query successful"
             }
 
-            # Add data/headers/plot if present in the result from DataProcessor
+            # Add data/headers if present
             if 'data' in result and result['data'] is not None:
                  try:
-                      # --- ENCODE THE DATA HERE ---
-                      response_data['data'] = encode_dataframe(result['data'])
-                      # --------------------------
+                      response_data['data'] = encode_dataframe(result['data']) 
                  except Exception as enc_err:
                       logger.error(f"Failed to encode dataframe for query {query_type_id}: {enc_err}", exc_info=True)
                       # Send error instead if encoding fails
                       self.send_error(f"Server error: Failed to prepare query results.")
                       return # Stop processing this query
-
             if 'headers' in result:
                  response_data['headers'] = result['headers'] # Headers are usually simple lists, no encoding needed
 
-            if 'plot' in result and result['plot'] is not None: # For Query 3
-                 try:
-                      # Plot bytes should already be bytes, just base64 encode
-                      response_data['plot'] = base64.b64encode(result['plot']).decode('utf-8')
-                 except Exception as plot_enc_err:
-                      logger.error(f"Failed to encode plot for query {query_type_id}: {plot_enc_err}", exc_info=True)
-                      # Decide if to send error or just omit plot
+            # --- ADD map_html if present --- 
+            if 'map_html' in result and result['map_html'] is not None:
+                 response_data['map_html'] = result['map_html'] # HTML is already a string
+            # ---------------------------------
 
+            # Remove old plot logic if any remnants exist
+            # if 'plot' in result and result['plot'] is not None: ...
+            
             # Send response
             self.send_response(MSG_QUERY_RESULT, response_data)
 
