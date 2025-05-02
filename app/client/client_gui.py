@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QTextEdit, QComboBox, QSpinBox, QGroupBox,
     QFormLayout, QSplitter, QTableWidget, QTableWidgetItem, QMessageBox,
     QStatusBar, QScrollArea, QGridLayout, QDialog, QFileDialog, QCheckBox,
-    QDateEdit, QDoubleSpinBox, QStackedWidget
+    QDateEdit, QDoubleSpinBox, QStackedWidget, QListWidget, QListWidgetItem
 )
 from PySide6.QtGui import QPixmap, QFont, QIcon, QPalette, QColor
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QSettings, QDate
@@ -449,8 +449,8 @@ class QueryWidget(QWidget):
         sex_layout = QHBoxLayout()
         sex_layout.addWidget(self.q3_sex_m_check)
         sex_layout.addWidget(self.q3_sex_f_check)
-        self.q3_descent_input = QLineEdit() 
-        self.q3_descent_input.setPlaceholderText("Enter descent codes separated by commas")
+        self.q3_descent_list = QListWidget()
+        self.q3_descent_list.setSelectionMode(QListWidget.MultiSelection)
         self.q3_charge_combo = QComboBox() 
         self.q3_charge_combo.addItems(["Optional: Loading charge types..."])
 
@@ -1429,10 +1429,26 @@ class ClientGUI(QMainWindow):
                 if self.query_tab.q3_sex_f_check.isChecked(): sex_codes.append('F')
                 if not sex_codes: raise ValueError("Please select at least one gender.")
                 params['sex_codes'] = sex_codes
-                
-                descents = self.query_tab.q3_descent_input.text().strip()
-                params['descent_codes'] = [d.strip().upper() for d in descents.split(',') if d.strip()]
-                if not params['descent_codes']: raise ValueError("Please enter at least one descent code.")
+
+                # --- Get selected descent codes from QListWidget --- 
+                selected_descent_codes = []
+                list_widget = self.query_tab.q3_descent_list
+                for i in range(list_widget.count()):
+                     item = list_widget.item(i)
+                     # Check if the item exists and is checkable before checking state
+                     if item and item.flags() & Qt.ItemIsUserCheckable and item.checkState() == Qt.Checked:
+                          code = item.data(Qt.UserRole)
+                          if code:
+                               selected_descent_codes.append(code)
+
+                if not selected_descent_codes:
+                     raise ValueError("Please select at least one descent code.")
+                params['descent_codes'] = selected_descent_codes
+                # ----------------------------------------------------
+                # # REMOVE incorrect logic from previous edit attempt:
+                # descents = self.query_tab.q3_descent_list.selectedItems()
+                # params['descent_codes'] = [item.text().strip() for item in descents]
+                # if not params['descent_codes']: raise ValueError("Please select at least one descent code.")
 
                 charge_group = self.query_tab.q3_charge_combo.currentText()
                 params['charge_group'] = charge_group if "Optional:" not in charge_group else None # Optional

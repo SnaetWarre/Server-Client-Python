@@ -7,7 +7,7 @@
 - [ ] Modify Query 3 (Arrests by Descent/Age/Sex):
     - [x] Server: Fetch distinct Descent Codes from the dataset.
     - [x] Server: Add the list of Descent Codes *and descriptions* to the metadata sent to the client.
-    - [ ] Client: Replace the existing Descent input with a multi-select dropdown populated from metadata.
+    - [x] Client: Replace the existing Descent input with a multi-select dropdown populated from metadata.
     - [ ] Client/Shared: Define the mapping for Descent Codes (e.g., B -> Black, W -> White, H -> Hispanic, A -> Other Asian, C -> Chinese, D -> Cambodian, F -> Filipino, G -> Guamanian, I -> Indian, J -> Japanese, K -> Korean, L -> Laotian, O -> Other, P -> Pacific Islander, S -> Samoan, U -> Hawaiian, V -> Vietnamese, Z -> Asian Indian, X -> Unknown).
     - [ ] Server: Update query processing logic to handle multiple Descent Codes.
     - [ ] Client: Modify the graph generation:
