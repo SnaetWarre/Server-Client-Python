@@ -13,7 +13,8 @@ import numpy as np
 # import seaborn as sns # No longer needed for Query 4 plot
 import io
 # from matplotlib.figure import Figure # No longer needed
-import folium # <<< Add folium import
+import folium
+from folium.plugins import MarkerCluster
 import logging
 from datetime import datetime
 # import base64 # No longer needed for plot encoding
@@ -933,13 +934,12 @@ class DataProcessor:
                 df_filtered['distance_km'] = distances[distances <= radius_km]
                 logger.info(f"Query 4: Found {len(df_filtered)} points within radius.")
 
-                # --- Generate Folium Map if results exist --- 
+                # --- Generate Folium Map with Marker Clustering --- 
                 if not df_filtered.empty:
                     try:
-                        # Create base map centered on the query point
-                        m = folium.Map(location=[center_lat, center_lon], zoom_start=13) # Adjust zoom as needed
+                        m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
 
-                        # Add Center Marker
+                        # Add Center Marker (directly to map)
                         folium.Marker(
                             [center_lat, center_lon],
                             popup=f"Center ({center_lat:.4f}, {center_lon:.4f})",
@@ -947,41 +947,46 @@ class DataProcessor:
                             icon=folium.Icon(color='red', icon='info-sign')
                         ).add_to(m)
 
-                        # Add Arrest Markers (limit number for performance if needed)
-                        max_markers = 1000 # Limit markers to avoid huge HTML
-                        df_to_plot = df_filtered.head(max_markers)
-                        if len(df_filtered) > max_markers:
-                             logger.warning(f"Query 4: Limiting map markers to {max_markers} out of {len(df_filtered)} results.")
+                        # --- Create Marker Cluster --- 
+                        marker_cluster = MarkerCluster().add_to(m)
+                        # ----------------------------
+
+                        # REMOVE marker limit
+                        # max_markers = 1000 
+                        # df_to_plot = df_filtered.head(max_markers)
+                        # if len(df_filtered) > max_markers:
+                        #      logger.warning(f"Query 4: Limiting map markers to {max_markers} out of {len(df_filtered)} results.")
+                        df_to_plot = df_filtered # Plot all points
 
                         for idx, row in df_to_plot.iterrows():
-                            # Create popup text for each marker
                             popup_text = f"<b>Arrest:</b> {row.get('Report ID', 'N/A')}<br>"
                             popup_text += f"<b>Date:</b> {row.get('Arrest Date', '').strftime('%Y-%m-%d')}<br>"
                             popup_text += f"<b>Address:</b> {row.get('Address', 'N/A')}<br>"
                             popup_text += f"<b>Charge:</b> {row.get('Charge Group Description', 'N/A')}<br>"
                             popup_text += f"<b>Coords:</b> ({row['LAT']:.4f}, {row['LON']:.4f})"
                             
+                            # --- Add marker TO THE CLUSTER --- 
                             folium.CircleMarker(
                                 location=[row['LAT'], row['LON']],
                                 radius=5,
                                 popup=folium.Popup(popup_text, max_width=300),
                                 tooltip=f"Arrest {row.get('Report ID', '')}",
-                                color='#3186cc', # Blueish color
+                                color='#3186cc',
                                 fill=True,
                                 fill_color='#3186cc',
                                 fill_opacity=0.7
-                            ).add_to(m)
+                            ).add_to(marker_cluster) # <<< Add to cluster, not map `m`
+                            # --------------------------------
 
-                        # Save map to an HTML string
-                        html_buffer = io.StringIO()
-                        m.save(html_buffer, close_file=False)
-                        map_html = html_buffer.getvalue()
-                        html_buffer.close()
-                        logger.info("Query 4: Folium map generated successfully.")
+                        # Get map HTML as string 
+                        try: map_html = m.get_root().render()
+                        except AttributeError: map_html = m._repr_html_()
+                        
+                        logger.info(f"Query 4: Folium map with {len(df_to_plot)} markers (clustered) generated successfully.")
 
                     except Exception as map_err:
                         logger.error(f"Query 4: Failed to generate Folium map: {map_err}", exc_info=True)
-                        map_html = None # Ensure map_html is None if generation fails
+                        map_html = None 
             
             # --- Prepare Results --- 
             final_title = f'Arrests within {radius_km}km of ({center_lat:.4f}, {center_lon:.4f})'
