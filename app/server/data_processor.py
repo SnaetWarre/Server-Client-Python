@@ -25,6 +25,9 @@ sns.set_palette('viridis')
 
 logger = logging.getLogger('data_processor')
 
+# Import the mapping
+from shared.constants import DESCENT_CODE_MAP
+
 def add_osm_background(ax, bbox, zoom=13):
     """Add OpenStreetMap background to plot using matplotlib"""
     
@@ -590,14 +593,31 @@ class DataProcessor:
              return []
 
     def get_unique_descent_codes(self):
-        """Returns a sorted list of unique descent codes."""
+        """Returns a sorted list of unique descent codes with descriptions.
+        Each item in the list is a dictionary: {'code': str, 'description': str}
+        """
         if self.df.empty: return []
         try:
-            codes = self.df['Descent Code'].dropna().unique().tolist()
-            return sorted([c for c in codes if isinstance(c, str)]) # Filter out non-strings
+            unique_codes = self.df['Descent Code'].dropna().unique().tolist()
+            # Filter out non-strings and sort the codes
+            valid_codes = sorted([c for c in unique_codes if isinstance(c, str)])
+
+            # Create list of dictionaries with descriptions
+            descent_list = []
+            for code in valid_codes:
+                description = DESCENT_CODE_MAP.get(code, f"Unknown Code ({code})") # Fallback for unmapped codes
+                descent_list.append({'code': code, 'description': description})
+
+            # Sort the final list by description for user-friendliness
+            descent_list.sort(key=lambda item: item['description'])
+
+            return descent_list
         except KeyError:
              logger.warning("Column 'Descent Code' not found for get_unique_descent_codes.")
              return []
+        except Exception as e:
+             logger.error(f"Error getting unique descent codes: {e}", exc_info=True)
+             return [] # Return empty list on other errors
 
     def get_date_range(self):
         """Returns the minimum and maximum arrest dates."""

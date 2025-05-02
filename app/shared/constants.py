@@ -46,4 +46,27 @@ QUERY_DESCRIPTIONS = {
 
 # Response status codes
 STATUS_OK = 'OK'
-STATUS_ERROR = 'ERROR' 
+STATUS_ERROR = 'ERROR'
+
+# --- Descent Code Mappings ---
+DESCENT_CODE_MAP = {
+    'A': 'Other Asian',
+    'B': 'Black',
+    'C': 'Chinese',
+    'D': 'Cambodian',
+    'F': 'Filipino',
+    'G': 'Guamanian',
+    'H': 'Hispanic/Latin/Mexican',
+    'I': 'American Indian/Alaskan Native',
+    'J': 'Japanese',
+    'K': 'Korean',
+    'L': 'Laotian',
+    'O': 'Other',
+    'P': 'Pacific Islander',
+    'S': 'Samoan',
+    'U': 'Hawaiian',
+    'V': 'Vietnamese',
+    'W': 'White',
+    'X': 'Unknown',
+    'Z': 'Asian Indian'
+} 
