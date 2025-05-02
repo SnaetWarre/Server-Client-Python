@@ -428,16 +428,16 @@ class QueryWidget(QWidget):
         """Create parameter widget for Query 2"""
         widget = QWidget()
         layout = QFormLayout(widget)
-        self.q2_charge_combo = QComboBox() 
+        self.q2_charge_combo = QComboBox()
         self.q2_charge_combo.addItems(["Loading charge types..."])
         self.q2_granularity_combo = QComboBox()
         self.q2_granularity_combo.addItems(["Daily", "Weekly", "Monthly", "Yearly"])
-        self.q2_area_input = QLineEdit() 
-        self.q2_area_input.setPlaceholderText("Optional: Enter areas separated by commas")
+        # self.q2_area_input = QLineEdit() # <-- REMOVED
+        # self.q2_area_input.setPlaceholderText("Optional: Enter areas separated by commas") # <-- REMOVED
 
         layout.addRow("Arrestatietype:", self.q2_charge_combo)
         layout.addRow("Tijdsgranulariteit:", self.q2_granularity_combo)
-        layout.addRow("Gebied(en) (optioneel):", self.q2_area_input)
+        # layout.addRow("Gebied(en) (optioneel):", self.q2_area_input) # <-- REMOVED
         return widget
 
     def _create_query3_params(self):
@@ -1421,8 +1421,8 @@ class ClientGUI(QMainWindow):
             elif query_index == 1: # Query 2
                 params['charge_group'] = self.query_tab.q2_charge_combo.currentText()
                 params['granularity'] = self.query_tab.q2_granularity_combo.currentText().lower()
-                areas = self.query_tab.q2_area_input.text().strip()
-                params['areas'] = [a.strip() for a in areas.split(',') if a.strip()] if areas else [] # Optional
+                # areas = self.query_tab.q2_area_input.text().strip() # <-- REMOVED
+                # params['areas'] = [a.strip() for a in areas.split(',') if a.strip()] if areas else [] # Optional <-- REMOVED
             elif query_index == 2: # Query 3
                 sex_codes = []
                 if self.query_tab.q3_sex_m_check.isChecked(): sex_codes.append('M')

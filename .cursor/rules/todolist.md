@@ -1,9 +1,9 @@
 # TODO List
 
 - [x] Add email validation (simple regex) to client registration.
-- [ ] Modify Query 2 (Arrests per Area):
-    - [ ] Remove the "gebieden" (areas) parameter from the client GUI.
-    - [ ] Update server-side query processing to reflect the removal (if necessary - might just ignore it now).
+- [x] Modify Query 2 (Arrests per Area):
+    - [x] Remove the "gebieden" (areas) parameter from the client GUI.
+    - [x] Update server-side query processing to reflect the removal.
 - [ ] Modify Query 3 (Arrests by Descent/Age/Sex):
     - [ ] Server: Fetch distinct Descent Codes from the dataset.
     - [ ] Server: Add the list of Descent Codes to the metadata sent to the client.

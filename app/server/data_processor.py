@@ -668,7 +668,7 @@ class DataProcessor:
     def process_query2(self, params):
         """
         Query 2: Trend van Specifieke Overtreding over Tijd
-        params: {'charge_group': str, 'granularity': str ('daily', 'weekly', 'monthly', 'yearly'), 'areas': list[str]}
+        params: {'charge_group': str, 'granularity': str ('daily', 'weekly', 'monthly', 'yearly')}
         """
         logger.info(f"Processing Query 2 with params: {params}")
         if self.df.empty: return {'status': 'error', 'message': 'Dataset not loaded'}
@@ -676,17 +676,12 @@ class DataProcessor:
         try:
             charge_group = params['charge_group']
             granularity = params.get('granularity', 'monthly') # Default to monthly
-            areas = params.get('areas', []) # Optional list of areas
 
             # Filter by charge group
             filtered_df = self.df[self.df['Charge Group Description'] == charge_group].copy()
 
-            # Filter by area(s) if provided
-            if areas:
-                 filtered_df = filtered_df[filtered_df['Area Name'].isin(areas)]
-
             if filtered_df.empty:
-                 return {'status': 'OK', 'data': [], 'headers': [], 'title': f'Trend for {charge_group} (No Data)'}
+                 return {'status': 'OK', 'data': [], 'headers': [], 'title': f'Trend for {charge_group} ({granularity.capitalize()}) (No Data)'}
 
             # Set index to Arrest Date for resampling
             filtered_df.set_index('Arrest Date', inplace=True)
@@ -716,10 +711,7 @@ class DataProcessor:
             # Prepare results
             data = trend_data.to_dict(orient='records')
             headers = ['Date', 'Arrest Count']
-            title = f'Trend for {charge_group}'
-            if areas:
-                 title += f' in {", ".join(areas)}'
-            title += f' ({granularity.capitalize()})'
+            title = f'Trend for {charge_group} ({granularity.capitalize()})'
 
             return {'status': 'OK', 'data': data, 'headers': headers, 'title': title}
 
