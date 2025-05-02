@@ -766,35 +766,70 @@ class DataProcessor:
                 filtered_df = filtered_df[filtered_df['Charge Group Description'] == charge_group]
 
             if filtered_df.empty:
-                 return {'status': 'OK', 'data': [], 'headers': [], 'plot': None, 'title': 'Demographic Analysis (No Data)'}
+                 # Use description in title if possible
+                 descent_names = [DESCENT_CODE_MAP.get(dc, dc) for dc in descent_codes]
+                 sex_names = ["Male" if sc == 'M' else "Female" if sc == 'F' else sc for sc in sex_codes]
+                 title = f'Arrests by Descent ({", ".join(descent_names)}) and Sex ({", ".join(sex_names)}) - No Data'
+                 if charge_group:
+                      title += f' for {charge_group}'
+                 return {'status': 'OK', 'data': [], 'headers': [], 'plot': None, 'title': title}
 
-            # Generate Plot (Example: Age distribution by Sex)
-            plt.figure(figsize=(10, 6))
-            sns.histplot(data=filtered_df, x='Age', hue='Sex Code', kde=True, common_norm=False)
-            plt.title('Age Distribution by Selected Demographics')
-            plt.xlabel('Age')
-            plt.ylabel('Count')
-            plt.tight_layout()
+            # --- NEW Plotting Logic --- 
+            
+            # 1. Calculate counts grouped by Descent and Sex
+            summary_data = filtered_df.groupby(['Descent Code', 'Sex Code']).size().reset_index(name='Count')
+            
+            # 2. Map Descent Code to Description
+            summary_data['Descent'] = summary_data['Descent Code'].map(DESCENT_CODE_MAP)
+            # Handle any codes not in the map (though get_unique_descent_codes should have description)
+            summary_data['Descent'] = summary_data['Descent'].fillna(summary_data['Descent Code'].apply(lambda x: f"Unknown ({x})"))
+            
+            # 3. Create the plot
+            plt.figure(figsize=(12, 7)) # Adjusted figure size
+            
+            plot_title = 'Arrests by Descent'
+            if len(sex_codes) == 1:
+                 sex_name = "Male" if sex_codes[0] == 'M' else "Female" if sex_codes[0] == 'F' else sex_codes[0]
+                 plot_title += f' ({sex_name})'
+                 # Plot single bars
+                 ax = sns.barplot(data=summary_data, x='Descent', y='Count', palette='viridis')
+            else: # Both sexes selected
+                 plot_title += ' (Male vs Female)'
+                 # Plot grouped bars using hue
+                 ax = sns.barplot(data=summary_data, x='Descent', y='Count', hue='Sex Code', palette='coolwarm')
+                 ax.legend(title='Sex Code')
+                 
+            # Add charge group to title if specified
+            if charge_group:
+                 plot_title += f'\nCharge Group: {charge_group}'
+                 
+            ax.set_title(plot_title)
+            ax.set_xlabel('Descent')
+            ax.set_ylabel('Number of Arrests')
+            plt.xticks(rotation=45, ha='right') # Rotate labels for better readability
+            ax.grid(True, axis='y', linestyle='--', alpha=0.7)
+            plt.tight_layout() 
+            
+            # --- End NEW Plotting Logic ---
 
-            # Save plot to buffer with higher DPI
+            # Save plot to buffer
             buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=150)
+            plt.savefig(buf, format='png', dpi=150) # Increased DPI slightly
             plt.close() # Close the figure
             buf.seek(0)
             plot_bytes = buf.read()
             buf.close()
 
-            # Optionally, return some summary data as well
-            # summary_data = filtered_df.groupby(['Sex Code', 'Descent Code']).size().reset_index(name='Count')
-            # data = summary_data.to_dict(orient='records')
-            # headers = ['Sex Code', 'Descent Code', 'Count']
+            # Prepare return data (now includes summary data and plot)
+            data_for_table = summary_data.to_dict(orient='records')
+            headers_for_table = ['Descent', 'Sex Code', 'Count'] # Headers for optional table view
 
             return {
                 'status': 'OK',
-                # 'data': data,        # Optional summary data
-                # 'headers': headers,  # Optional summary data headers
-                'plot': plot_bytes,  # Raw bytes of the plot PNG
-                'title': 'Demographic Analysis'
+                'data': data_for_table,        # Return summary data for potential table display
+                'headers': headers_for_table,  
+                'plot': plot_bytes,           # Raw bytes of the plot PNG
+                'title': plot_title           # Use the generated plot title
              }
 
         except KeyError as ke:
