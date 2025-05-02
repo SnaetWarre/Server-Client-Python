@@ -12,6 +12,7 @@ import queue
 from datetime import datetime
 import sqlite3
 import base64
+import re # Import re module
 
 # Add the parent directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -187,6 +188,12 @@ class ClientHandler(threading.Thread):
             self.send_error("Registration failed: missing required fields")
             return
         
+        # Basic email format validation using regex
+        email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$" # Corrected closing quote
+        if not re.match(email_regex, email):
+             self.send_error("Registration failed: invalid email format")
+             return
+
         try:
             # Register client in database
             success = self.db.register_client(name, nickname, email, password)

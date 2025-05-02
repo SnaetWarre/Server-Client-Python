@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QGroupBox, QMessageBox, QSplitter, QStatusBar, QFormLayout, QFrame, QCheckBox
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QDateTime, QSettings
-from PySide6.QtGui import QFont, QPalette, QColor
+from PySide6.QtGui import QFont, QPalette, QColor, QIntValidator
 
 # Dark theme stylesheet
 DARK_STYLESHEET = """
@@ -235,20 +235,20 @@ class ServerGUI(QMainWindow):
         # Default theme to dark
         self.dark_theme = self.settings.value("dark_theme", True, type=bool)
         
-        # Server instance
-        self.server = Server()
+        # Server instance - Initialize to None, created on start
+        self.server = None
         
         # Hook our Qt signals into the GUI slots
         self.activity_log_signal.connect(self.on_activity_log)
         self.client_list_update_signal.connect(self.update_client_list)
         
-        # Register server callbacks to *emit* Qt signals
-        self.server.on_activity_log = (
-            lambda timestamp, message: self.activity_log_signal.emit(timestamp, message)
-        )
-        self.server.on_client_list_update = (
-            lambda: self.client_list_update_signal.emit()
-        )
+        # Register server callbacks -> MOVED to start_server after instance creation
+        # self.server.on_activity_log = (
+        #     lambda timestamp, message: self.activity_log_signal.emit(timestamp, message)
+        # )
+        # self.server.on_client_list_update = (
+        #     lambda: self.client_list_update_signal.emit()
+        # )
         
         # Setup GUI components
         self.setup_gui()
@@ -321,73 +321,84 @@ class ServerGUI(QMainWindow):
         self.apply_theme()
     
     def setup_server_tab(self):
-        """Setup server control tab"""
-        # Create server tab
+        """Set up the Server Control & Activity Log tab"""
         server_tab = QWidget()
         self.tab_widget.addTab(server_tab, "Server Control")
-        
-        # Server tab layout
-        server_layout = QVBoxLayout(server_tab)
-        server_layout.setContentsMargins(5, 5, 5, 5)  # Reduce margins
-        server_layout.setSpacing(5)  # Reduce spacing
-        
-        # Create server control group
-        control_group = QGroupBox("Server Control")
-        control_layout = QHBoxLayout(control_group)
-        control_layout.setContentsMargins(5, 10, 5, 5)  # Reduce margins
-        control_layout.setSpacing(5)  # Reduce spacing
-        
-        # Create server control buttons
+        layout = QHBoxLayout(server_tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        # --- Left side: Control Panel ---
+        control_panel = QGroupBox("Server Control")
+        control_layout = QVBoxLayout()
+        control_layout.setSpacing(10)
+
+        # Host and Port configuration
+        config_layout = QFormLayout()
+        self.host_input = QLineEdit()
+        self.port_input = QLineEdit()
+        # Validate port input to be integer between 1 and 65535
+        port_validator = QIntValidator(1, 65535, self)
+        self.port_input.setValidator(port_validator)
+
+        # Load saved host/port or use defaults
+        default_host = "localhost"
+        default_port = "8888"
+        self.host_input.setText(self.settings.value("server_host", default_host))
+        self.port_input.setText(self.settings.value("server_port", default_port))
+
+        config_layout.addRow("Host:", self.host_input)
+        config_layout.addRow("Port:", self.port_input)
+        control_layout.addLayout(config_layout)
+
+        # Start/Stop Buttons
+        button_layout = QHBoxLayout()
         self.start_button = QPushButton("Start Server")
-        self.start_button.clicked.connect(self.start_server)
-        control_layout.addWidget(self.start_button)
-        
         self.stop_button = QPushButton("Stop Server")
+        self.start_button.clicked.connect(self.start_server)
         self.stop_button.clicked.connect(self.stop_server)
-        self.stop_button.setEnabled(False)
-        control_layout.addWidget(self.stop_button)
+        self.stop_button.setEnabled(False) # Initially disabled
+        button_layout.addWidget(self.start_button)
+        button_layout.addWidget(self.stop_button)
+        control_layout.addLayout(button_layout)
+
+        # Broadcast Message
+        broadcast_layout = QVBoxLayout()
+        broadcast_label = QLabel("Broadcast Message to All Clients:")
+        self.broadcast_input = QLineEdit()
+        self.broadcast_button = QPushButton("Send Broadcast")
+        self.broadcast_button.clicked.connect(self.broadcast_message)
+        broadcast_layout.addWidget(broadcast_label)
+        broadcast_layout.addWidget(self.broadcast_input)
+        broadcast_layout.addWidget(self.broadcast_button)
+        control_layout.addLayout(broadcast_layout)
         
-        # Add stretch to push buttons to the left
-        control_layout.addStretch()
-        
-        # Add control group to server layout
-        server_layout.addWidget(control_group)
-        
-        # Create message group
-        message_group = QGroupBox("Broadcast Message")
-        message_layout = QHBoxLayout(message_group)
-        message_layout.setContentsMargins(5, 10, 5, 5)  # Reduce margins
-        message_layout.setSpacing(5)  # Reduce spacing
-        
-        # Create message entry
-        self.message_entry = QLineEdit()
-        message_layout.addWidget(self.message_entry)
-        
-        # Create send button
-        self.send_button = QPushButton("Broadcast")
-        self.send_button.clicked.connect(self.broadcast_message)
-        self.send_button.setEnabled(False)
-        message_layout.addWidget(self.send_button)
-        
-        # Add message group to server layout
-        server_layout.addWidget(message_group)
-        
-        # Create server log group
+        # Theme toggle checkbox
+        theme_checkbox = QCheckBox("Use Dark Theme")
+        theme_checkbox.setChecked(self.dark_theme)
+        theme_checkbox.stateChanged.connect(self.toggle_theme)
+        control_layout.addWidget(theme_checkbox, alignment=Qt.AlignLeft) # Align left
+
+        control_layout.addStretch() # Push controls to the top
+        control_panel.setLayout(control_layout)
+
+        # --- Right side: Activity Log ---
         log_group = QGroupBox("Server Activity Log")
         log_layout = QVBoxLayout(log_group)
-        log_layout.setContentsMargins(5, 10, 5, 5)  # Reduce margins
-        log_layout.setSpacing(5)  # Reduce spacing
+        log_layout.setContentsMargins(5, 10, 5, 5)
+        log_layout.setSpacing(5)
         
         # Create server log text area
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         log_layout.addWidget(self.log_text)
         
-        # Add log group to server layout
-        server_layout.addWidget(log_group)
-        
-        # Make log group expand to fill available space
-        server_layout.setStretchFactor(log_group, 1)
+        # --- Add panels to the main tab layout ---
+        layout.addWidget(control_panel)
+        layout.addWidget(log_group)
+
+        # Make log group expand more than the control panel (e.g., 2:1 ratio)
+        layout.setStretchFactor(control_panel, 1)
+        layout.setStretchFactor(log_group, 2)
     
     def setup_clients_tab(self):
         """Setup clients tab"""
@@ -515,43 +526,105 @@ class ServerGUI(QMainWindow):
         stats_layout.addStretch()
     
     def start_server(self):
-        """Start the server"""
-        if not self.server_running:
-            if self.server.start():
-                self.server_running = True
-                self.status_bar.showMessage(f"Server running on {self.server.host}:{self.server.port}")
-                self.start_button.setEnabled(False)
-                self.stop_button.setEnabled(True)
-                self.send_button.setEnabled(True)
-                QMessageBox.information(self, "Server", "Server started successfully!")
-            else:
-                QMessageBox.critical(self, "Server", "Failed to start server!")
+        """Creates a Server instance and starts it in a separate thread."""
+        # Prevent starting if already running (or if server object exists)
+        if self.server and self.server.running:
+            QMessageBox.warning(self, "Warning", "Server is already running.")
+            return
+        if self.server is not None:
+             # Maybe stopped uncleanly? Or trying to start again?
+             # For simplicity, let's just prevent starting again if object exists but not running
+             QMessageBox.warning(self, "Warning", "Server object exists but is not running. Stop first if needed.")
+             # Or should we try to reuse/restart? For now, disallow.
+             return
+
+        host = self.host_input.text().strip()
+        port_str = self.port_input.text().strip()
+
+        if not host:
+             QMessageBox.warning(self, "Error", "Host cannot be empty.")
+             return
+
+        try:
+            port = int(port_str)
+            if not (1 <= port <= 65535):
+                raise ValueError("Port out of range")
+        except ValueError:
+            QMessageBox.warning(self, "Error", "Invalid Port number. Must be between 1 and 65535.")
+            return
+
+        # Save the settings
+        self.settings.setValue("server_host", host)
+        self.settings.setValue("server_port", port)
+
+        # --- Create and Start Server ---
+        try:
+            # Create the Server instance with host and port
+            self.server = Server(host=host, port=port)
+
+            # Register server callbacks NOW that self.server exists
+            self.server.on_activity_log = (
+                lambda timestamp, message: self.activity_log_signal.emit(timestamp, message)
+            )
+            self.server.on_client_list_update = (
+                lambda: self.client_list_update_signal.emit()
+            )
+
+            # Start the server (no args needed for start())
+            self.server.start()
+
+            self.status_bar.showMessage(f"Server started on {host}:{port}")
+            self.start_button.setEnabled(False)
+            self.stop_button.setEnabled(True)
+            self.host_input.setEnabled(False) # Disable input when running
+            self.port_input.setEnabled(False) # Disable input when running
+
+        except Exception as e:
+            # Clean up the partially created server object if start fails
+            self.server = None 
+            QMessageBox.critical(self, "Server Start Error", f"Failed to create or start server: {e}")
+            self.status_bar.showMessage("Server failed to start.")
+            # Ensure buttons are in correct state if start fails
+            self.start_button.setEnabled(True)
+            self.stop_button.setEnabled(False)
+            self.host_input.setEnabled(True)
+            self.port_input.setEnabled(True)
     
     def stop_server(self):
-        """Stop the server"""
-        if self.server_running:
-            reply = QMessageBox.question(
-                self, "Stop Server", 
-                "Are you sure you want to stop the server?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
-            
-            if reply == QMessageBox.Yes:
-                self.server.stop()
-                self.server_running = False
-                self.status_bar.showMessage("Server not running")
+        """Stops the server gracefully."""
+        # Check if server instance exists and is running
+        if self.server and self.server.running:
+            if self.server.stop(): # stop() should return True/False
+                self.status_bar.showMessage("Server stopped.")
+                self.server = None # Destroy the server instance
                 self.start_button.setEnabled(True)
                 self.stop_button.setEnabled(False)
-                self.send_button.setEnabled(False)
-                self.client_send_button.setEnabled(False)
+                self.host_input.setEnabled(True) # Re-enable input
+                self.port_input.setEnabled(True) # Re-enable input
+            else:
+                # Stop failed - Maybe don't destroy self.server instance?
+                # Keep UI disabled as server might be in weird state
+                self.status_bar.showMessage("Failed to stop server gracefully.")
+                QMessageBox.warning(self, "Stop Error", "Server did not stop cleanly. Check logs.")
+                self.start_button.setEnabled(False) # Keep start disabled
+                self.stop_button.setEnabled(True) # Keep stop enabled to potentially retry
+                self.host_input.setEnabled(False)
+                self.port_input.setEnabled(False)
+        elif self.server is None:
+             QMessageBox.information(self, "Info", "Server is not running.")
+             # Ensure UI is in the stopped state
+             self.start_button.setEnabled(True)
+             self.stop_button.setEnabled(False)
+             self.host_input.setEnabled(True)
+             self.port_input.setEnabled(True)
+        # else: server exists but not running - do nothing, handled in start_server check
     
     def broadcast_message(self):
         """Broadcast a message to all clients"""
-        message = self.message_entry.text().strip()
+        message = self.broadcast_input.text().strip()
         if message:
             if self.server.broadcast_message(message):
-                self.message_entry.clear()
+                self.broadcast_input.clear()
                 QMessageBox.information(self, "Message", "Message broadcast to all clients!")
             else:
                 QMessageBox.warning(self, "Message", "No clients connected to broadcast to!")

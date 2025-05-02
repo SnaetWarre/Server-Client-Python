@@ -95,7 +95,7 @@ def receive_message(sock):
         # --- Receive message length (4 bytes) ---
         # Use a reasonable timeout to avoid indefinite blocking
         original_timeout = sock.gettimeout()
-        sock.settimeout(10.0) # 10 second timeout for reading length
+        sock.settimeout(2.0)
         try:
             msg_len_bytes = sock.recv(4)
         finally:

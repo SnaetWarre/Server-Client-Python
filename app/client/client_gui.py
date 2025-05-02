@@ -8,6 +8,7 @@ import logging
 from datetime import datetime
 from PIL import Image, ImageQt
 import io
+import re # Import re module
 
 # Add the parent directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -1368,26 +1369,34 @@ class ClientGUI(QMainWindow):
     def register(self):
         """Register a new user"""
         # Get registration details
-        name = self.register_widget.name_edit.text()
-        nickname = self.register_widget.nickname_edit.text()
-        email = self.register_widget.email_edit.text()
-        password = self.register_widget.password_edit.text()
-        confirm_password = self.register_widget.confirm_password_edit.text()
-        
-        # Validate inputs
-        if not name or not nickname or not email or not password:
-            QMessageBox.warning(self, "Register", "All fields are required")
+        name = self.register_widget.name_edit.text().strip()
+        nickname = self.register_widget.nickname_edit.text().strip()
+        email = self.register_widget.email_edit.text().strip()
+        password = self.register_widget.password_edit.text().strip()
+        confirm_password = self.register_widget.confirm_password_edit.text().strip()
+
+        if not all([name, nickname, email, password]):
+            QMessageBox.warning(self, "Registration Failed", "All fields are required.")
             return
-        
+
+        # Basic email format validation using regex
+        email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$" # Simple regex
+        if not re.match(email_regex, email):
+             QMessageBox.warning(self, "Registration Failed", "Invalid email format.")
+             return
+
         if password != confirm_password:
             QMessageBox.warning(self, "Register", "Passwords do not match")
             return
         
         # Send registration request
-        self.client.register(name, nickname, email, password)
-        
-        # Show login tab (registration response will be handled by callbacks)
-        self.show_login()
+        success, message = self.client.register(name, nickname, email, password)
+
+        if success:
+            # Show login tab (registration response will be handled by callbacks)
+            self.show_login()
+        else:
+            QMessageBox.critical(self, "Registration Error", message)
     
     def send_query(self):
         """Gather parameters based on selected query and send to server"""
