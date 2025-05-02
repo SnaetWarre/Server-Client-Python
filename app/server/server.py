@@ -379,10 +379,10 @@ class ClientHandler(threading.Thread):
             if 'headers' in result:
                  response_data['headers'] = result['headers'] # Headers are usually simple lists, no encoding needed
 
-            # --- ADD map_html if present --- 
-            if 'map_html' in result and result['map_html'] is not None:
-                 response_data['map_html'] = result['map_html'] # HTML is already a string
-            # ---------------------------------
+            # --- ADD map_filepath if present --- 
+            if 'map_filepath' in result and result['map_filepath'] is not None:
+                 response_data['map_filepath'] = result['map_filepath'] 
+            # ------------------------------------
 
             # Remove old plot logic if any remnants exist
             # if 'plot' in result and result['plot'] is not None: ...

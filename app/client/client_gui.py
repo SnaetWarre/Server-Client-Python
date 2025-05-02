@@ -1112,33 +1112,55 @@ class ClientGUI(QMainWindow):
         if isinstance(result, dict):
             query_type = result.get('query_type', 'unknown')
             metadata_type = result.get('metadata_type')
-            map_html_content = result.get('map_html')
+            map_filepath = result.get('map_filepath') # <<< Get map FILEPATH
 
             if metadata_type:
                 self.handle_metadata_result(metadata_type, result.get('data', []))
-            elif map_html_content:
+            elif map_filepath: # <<< Check if map filepath is present
                 try:
-                    # --- Handle HTML Map --- 
-                    # Create a temporary file with .html extension
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as temp_map_file:
-                        temp_map_file.write(map_html_content)
-                        temp_map_path = temp_map_file.name
-                        logger.info(f"Saved temporary map to: {temp_map_path}")
+                    # --- Handle Local HTML Map File --- 
+                    # Path received from server IS the absolute path
+                    real_path = map_filepath 
+                    if not os.path.exists(real_path):
+                         logger.error(f"Map file path received from server does not exist: {real_path}")
+                         QMessageBox.critical(self, "Map Error", f"Received map path does not exist:\n{real_path}")
+                         self.query_tab.display_results(result) # Display table data as fallback
+                         return
+                         
+                    # Construct file URI
+                    # On Linux/macOS, need file:// prefix. On Windows, just the path might work, 
+                    # but file:// should be more robust.
+                    if sys.platform == 'win32':
+                        file_uri = f'file:///{real_path.replace("\\", "/")}' # Need triple slash for Windows
+                    else:
+                        file_uri = f'file://{real_path}'
+                    logger.info(f"Attempting to open local map file at URI: {file_uri}") 
+                    
+                    # Open the local file in the default web browser
+                    try:
+                        success = webbrowser.open(file_uri)
+                        if success:
+                             logger.info("webbrowser.open() call successful.")
+                             self.statusBar().showMessage("Opening interactive map in browser...", 3000)
+                        else:
+                             logger.warning("webbrowser.open() returned False. Browser might not have opened.")
+                             QMessageBox.warning(self, "Map Info", f"Attempted to open map, but the browser might not have launched automatically.\n\nPlease try opening the file manually:\n{real_path}")
+                             self.statusBar().showMessage("Map generated, check file path.", 5000)
+                    except webbrowser.Error as wb_err:
+                         logger.error(f"webbrowser.Error opening map: {wb_err}", exc_info=True)
+                         QMessageBox.critical(self, "Map Error", f"Could not open interactive map due to a browser error: {wb_err}")
+                         self.statusBar().showMessage("Error opening map (webbrowser error).", 5000)
 
-                    # Open the temporary file in the default web browser
-                    # Use file:// URI scheme
-                    webbrowser.open(f'file://{os.path.realpath(temp_map_path)}')
-                    self.statusBar().showMessage("Opening interactive map in browser...", 3000)
                     # Hide the internal plot area
                     self.query_tab.plot_scroll_area.hide()
-                    self.query_tab.results_table.show()
-                    # --- End Handle HTML Map ---
+                    self.query_tab.results_table.show() 
+                    # --- End Handle Local HTML Map File ---
                 except Exception as e:
-                    logger.error(f"Error handling/opening map HTML: {e}", exc_info=True)
-                    QMessageBox.critical(self, "Map Error", f"Could not open interactive map: {e}")
-                    self.statusBar().showMessage("Error opening map.", 5000)
-                    # Optionally display the tabular data if map fails
-                    self.query_tab.display_results(result) # Display table data as fallback
+                    logger.error(f"Error handling map filepath: {e}", exc_info=True)
+                    QMessageBox.critical(self, "Map Error", f"Could not process map filepath: {e}")
+                    self.statusBar().showMessage("Error handling map path.", 5000)
+                    self.query_tab.display_results(result) 
+            
             elif 'error' in result:
                  logger.error(f"Query Error from server or client processing: {result['error']}")
                  self.status_bar.showMessage(f"Query Error: {result['error']}", 5000)
@@ -1152,8 +1174,8 @@ class ClientGUI(QMainWindow):
                     try:
                         record_count = len(result['data'])
                     except TypeError:
-                         logger.warning("Could not get length of received data.")
-                         record_count = 'N/A'
+                        logger.warning("Could not get length of received data.")
+                        record_count = 'N/A'
                 self.status_bar.showMessage(f"Query successful. Displayed {record_count} records.", 3000)
         else:
              logger.error(f"Received unexpected result format: {type(result)}")

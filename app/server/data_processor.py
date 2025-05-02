@@ -20,6 +20,7 @@ from datetime import datetime
 # import base64 # No longer needed for plot encoding
 # import urllib.request # No longer needed for OSM background
 from math import log, tan, pi, cos, sinh, atan
+import uuid # For unique filenames
 
 # Set the style for visualizations
 # plt.style.use('seaborn-v0_8-darkgrid') # Keep for other plots
@@ -29,6 +30,12 @@ logger = logging.getLogger('data_processor')
 
 # Import the mapping
 from shared.constants import DESCENT_CODE_MAP
+
+# Define a directory for temporary maps relative to the script location
+# Adjust path as necessary, e.g., create it outside the app folder if preferred
+TEMP_MAP_DIR = os.path.join(os.path.dirname(__file__), 'temp_maps')
+# Ensure the directory exists
+os.makedirs(TEMP_MAP_DIR, exist_ok=True)
 
 def add_osm_background(ax, bbox, zoom=13):
     """Add OpenStreetMap background to plot using matplotlib"""
@@ -891,7 +898,7 @@ class DataProcessor:
         Query 4: Geografische Hotspots van Arrestaties
         params: {'center_lat': float, 'center_lon': float, 'radius_km': float, 'start_date': str(ISO), 'end_date': str(ISO), 'arrest_type_code': str | None}
 
-        Returns a dict with 'data' (list of arrests), 'headers', 'title', and 'map_html' (HTML content of the map).
+        Returns a dict with 'data' (list of arrests), 'headers', 'title', and 'map_filepath' (absolute path to saved HTML map).
         """
         logger.info(f"Processing Query 4 with params: {params}")
         if self.df.empty: return {'status': 'error', 'message': 'Dataset not loaded'}
@@ -927,7 +934,7 @@ class DataProcessor:
             if arrest_type_code and 'Arrest Type Code' in df_filtered.columns:
                 df_filtered = df_filtered[df_filtered['Arrest Type Code'] == arrest_type_code]
             
-            map_html = None
+            map_filepath_abs = None # Initialize
             if not df_filtered.empty:
                 distances = self._haversine(center_lat, center_lon, df_filtered['LAT'].values, df_filtered['LON'].values)
                 df_filtered = df_filtered[distances <= radius_km].copy() # Copy results after final filter
@@ -978,15 +985,19 @@ class DataProcessor:
                             ).add_to(marker_cluster) # <<< Add to cluster, not map `m`
                             # --------------------------------
 
-                        # Get map HTML as string 
-                        try: map_html = m.get_root().render()
-                        except AttributeError: map_html = m._repr_html_()
+                        # --- Save map to a unique temporary file --- 
+                        map_basename = f"map-{uuid.uuid4()}.html"
+                        # Get the absolute path
+                        map_filepath_abs = os.path.abspath(os.path.join(TEMP_MAP_DIR, map_basename))
+                        m.save(map_filepath_abs)
+                        # map_filename = map_basename # No longer need just basename
+                        # -------------------------------------------
                         
-                        logger.info(f"Query 4: Folium map with {len(df_to_plot)} markers (clustered) generated successfully.")
+                        logger.info(f"Query 4: Folium map with {len(df_to_plot)} markers saved to {map_filepath_abs}.")
 
                     except Exception as map_err:
-                        logger.error(f"Query 4: Failed to generate Folium map: {map_err}", exc_info=True)
-                        map_html = None 
+                        logger.error(f"Query 4: Failed to generate or save Folium map: {map_err}", exc_info=True)
+                        map_filepath_abs = None 
             
             # --- Prepare Results --- 
             final_title = f'Arrests within {radius_km}km of ({center_lat:.4f}, {center_lon:.4f})'
@@ -996,7 +1007,7 @@ class DataProcessor:
             if df_filtered.empty:
                  # Return empty data but indicate no results in title
                  final_title += " (No Results)"
-                 return {'status': 'OK', 'data': [], 'headers': [], 'map_html': None, 'title': final_title}
+                 return {'status': 'OK', 'data': [], 'headers': [], 'map_filepath': None, 'title': final_title}
 
             # Prepare tabular data as before
             output_cols = ['Report ID', 'Arrest Date', 'Area Name', 'Address', 'LAT', 'LON', 'Charge Group Description', 'Arrest Type Code', 'distance_km']
@@ -1007,8 +1018,8 @@ class DataProcessor:
             data = result_df.to_dict(orient='records')
             headers = output_cols
 
-            # Return data AND map HTML
-            return {'status': 'OK', 'data': data, 'headers': headers, 'map_html': map_html, 'title': final_title}
+            # Return data AND map FILEPATH
+            return {'status': 'OK', 'data': data, 'headers': headers, 'map_filepath': map_filepath_abs, 'title': final_title}
 
         except KeyError as ke:
              logger.error(f"Query 4 failed - Missing parameter/column: {ke}")
