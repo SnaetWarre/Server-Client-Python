@@ -9,19 +9,20 @@ matplotlib.use('Agg') # Use the Agg backend for non-interactive plotting in thre
 import os
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
+# import matplotlib.pyplot as plt # No longer needed for Query 4 plot
+# import seaborn as sns # No longer needed for Query 4 plot
 import io
-from matplotlib.figure import Figure
+# from matplotlib.figure import Figure # No longer needed
+import folium # <<< Add folium import
 import logging
 from datetime import datetime
-import base64
-import urllib.request
+# import base64 # No longer needed for plot encoding
+# import urllib.request # No longer needed for OSM background
 from math import log, tan, pi, cos, sinh, atan
 
 # Set the style for visualizations
-plt.style.use('seaborn-v0_8-darkgrid')
-sns.set_palette('viridis')
+# plt.style.use('seaborn-v0_8-darkgrid') # Keep for other plots
+# sns.set_palette('viridis') # Keep for other plots
 
 logger = logging.getLogger('data_processor')
 
@@ -889,13 +890,11 @@ class DataProcessor:
         Query 4: Geografische Hotspots van Arrestaties
         params: {'center_lat': float, 'center_lon': float, 'radius_km': float, 'start_date': str(ISO), 'end_date': str(ISO), 'arrest_type_code': str | None}
 
-        Returns a dict with 'data' (list of arrests), 'headers', 'title', and potentially 'plot' (heatmap bytes).
+        Returns a dict with 'data' (list of arrests), 'headers', 'title', and 'map_html' (HTML content of the map).
         """
         logger.info(f"Processing Query 4 with params: {params}")
-        if self.df.empty:
-            return {'status': 'error', 'message': 'Dataset not loaded'}
-        if 'LAT' not in self.df.columns or 'LON' not in self.df.columns:
-            return {'status': 'error', 'message': 'Latitude/Longitude data not available in dataset.'}
+        if self.df.empty: return {'status': 'error', 'message': 'Dataset not loaded'}
+        if 'LAT' not in self.df.columns or 'LON' not in self.df.columns: return {'status': 'error', 'message': 'Latitude/Longitude data not available.'}
 
         try:
             center_lat = params['center_lat']
@@ -905,147 +904,110 @@ class DataProcessor:
             end_date = pd.to_datetime(params['end_date']).replace(hour=23, minute=59, second=59)
             arrest_type_code = params.get('arrest_type_code')
 
-            # --- Bounding Box Calculation ---
-            # Rough conversion: 1 degree latitude ~= 111 km
-            # 1 degree longitude ~= 111 km * cos(latitude)
+            # --- Filter Data --- 
+            # (Keep the efficient bounding box + precise radius filter)
             lat_degrees_delta = radius_km / 111.0
             lon_degrees_delta = radius_km / (111.0 * np.cos(np.radians(center_lat)))
+            min_lat, max_lat = center_lat - lat_degrees_delta, center_lat + lat_degrees_delta
+            min_lon, max_lon = center_lon - lon_degrees_delta, center_lon + lon_degrees_delta
 
-            min_lat = center_lat - lat_degrees_delta
-            max_lat = center_lat + lat_degrees_delta
-            min_lon = center_lon - lon_degrees_delta
-            max_lon = center_lon + lon_degrees_delta
-            logger.info(f"Query 4: Bounding Box - LAT ({min_lat:.4f} to {max_lat:.4f}), LON ({min_lon:.4f} to {max_lon:.4f})")
-            # --- End Bounding Box Calculation ---
+            df_numeric = self.df.copy()
+            df_numeric['LAT'] = pd.to_numeric(df_numeric['LAT'], errors='coerce')
+            df_numeric['LON'] = pd.to_numeric(df_numeric['LON'], errors='coerce')
 
-            # --- Filter Data (Date, Type, Coords, *Bounding Box*) ---
-            # Ensure LAT/LON are numeric *before* bounding box filter for efficiency
-            df_filtered = self.df.copy() # Start with a copy
-            df_filtered['LAT'] = pd.to_numeric(df_filtered['LAT'], errors='coerce')
-            df_filtered['LON'] = pd.to_numeric(df_filtered['LON'], errors='coerce')
-
-            df_filtered = df_filtered[
-                (df_filtered['Arrest Date'] >= start_date) &
-                (df_filtered['Arrest Date'] <= end_date) &
-                df_filtered['LAT'].notna() & # Check after numeric conversion
-                df_filtered['LON'].notna() & # Check after numeric conversion
-                # Add bounding box filter here
-                (df_filtered['LAT'] >= min_lat) &
-                (df_filtered['LAT'] <= max_lat) &
-                (df_filtered['LON'] >= min_lon) &
-                (df_filtered['LON'] <= max_lon)
+            df_filtered = df_numeric[
+                (df_numeric['Arrest Date'] >= start_date) &
+                (df_numeric['Arrest Date'] <= end_date) &
+                df_numeric['LAT'].notna() & df_numeric['LON'].notna() &
+                (df_numeric['LAT'] >= min_lat) & (df_numeric['LAT'] <= max_lat) &
+                (df_numeric['LON'] >= min_lon) & (df_numeric['LON'] <= max_lon)
             ]
-            logger.info(f"Query 4: After date and bounding box filter, size: {len(df_filtered)}")
 
-            # Optional: Filter by Arrest Type Code (apply *after* bounding box)
             if arrest_type_code and 'Arrest Type Code' in df_filtered.columns:
-                logger.info(f"Query 4: Filtering by Arrest Type Code = '{arrest_type_code}'. Available codes in current data: {df_filtered['Arrest Type Code'].unique()}")
                 df_filtered = df_filtered[df_filtered['Arrest Type Code'] == arrest_type_code]
-                logger.info(f"Query 4: After arrest type filter ('{arrest_type_code}'), size: {len(df_filtered)}")
-            elif arrest_type_code:
-                 logger.warning(f"Query 4: Arrest type code '{arrest_type_code}' provided, but 'Arrest Type Code' column not found in filtered data.")
-
-            # --- Calculate *precise* distance and filter by radius (only on bounding box results) ---
-            plot_bytes = None
+            
+            map_html = None
             if not df_filtered.empty:
-                 # LAT/LON are already numeric and non-null from previous steps
-                 distances = self._haversine(center_lat, center_lon, df_filtered['LAT'].values, df_filtered['LON'].values)
-                 df_filtered['distance_km'] = distances
-                 # Apply final radius filter
-                 df_filtered = df_filtered[df_filtered['distance_km'] <= radius_km]
-                 logger.info(f"Query 4: After precise radius ({radius_km}km) filter, size: {len(df_filtered)}")
+                distances = self._haversine(center_lat, center_lon, df_filtered['LAT'].values, df_filtered['LON'].values)
+                df_filtered = df_filtered[distances <= radius_km].copy() # Copy results after final filter
+                df_filtered['distance_km'] = distances[distances <= radius_km]
+                logger.info(f"Query 4: Found {len(df_filtered)} points within radius.")
 
-                 # --- Generate Scatter Plot if results exist --- 
-                 if not df_filtered.empty:
-                     try:
-                         logger.info(f"Query 4: Generating scatter plot for {len(df_filtered)} points.")
-                         
-                         fig = plt.figure(figsize=(10, 10))
-                         ax = fig.add_subplot(111)
-                         
-                         # --- Replace KDE plot with Scatter Plot --- 
-                         ax.scatter(df_filtered['LON'], df_filtered['LAT'], 
-                                    s=10,          # Size of points
-                                    alpha=0.6,     # Transparency 
-                                    label='Arrests') 
-                         # -----------------------------------------
-                         
-                         # Add center point
-                         ax.scatter(center_lon, center_lat, color='red', s=80, marker='x', 
-                                   linewidth=2, label='Center')
-                         
-                         # Set bounds slightly larger than data points
-                         buffer = max(0.005, radius_km/100)  # At least 0.005 degrees buffer
-                         ax.set_xlim(center_lon - lon_degrees_delta - buffer, 
-                                    center_lon + lon_degrees_delta + buffer)
-                         ax.set_ylim(center_lat - lat_degrees_delta - buffer, 
-                                    center_lat + lat_degrees_delta + buffer)
-                         
-                         ax.set_aspect('equal')
-                         
-                         # Add the base map from OpenStreetMap
-                         try:
-                             add_osm_background(ax, [center_lon-lon_degrees_delta-buffer, 
-                                                    center_lat-lat_degrees_delta-buffer,
-                                                    center_lon+lon_degrees_delta+buffer, 
-                                                    center_lat+lat_degrees_delta+buffer])
-                         except Exception as map_err:
-                             logger.warning(f"Failed to add map basemap: {map_err}. Falling back to basic plot.")
-                         
-                         ax.set_xlabel('Longitude')
-                         ax.set_ylabel('Latitude')
-                         ax.legend(loc='upper right')
-                         # Update title
-                         plot_title = f'Arrest Locations within {radius_km}km of ({center_lat:.4f}, {center_lon:.4f})'
-                         if arrest_type_code:
-                              plot_title += f'\nType: {arrest_type_code}'
-                         ax.set_title(plot_title)
-                         
-                         buf = io.BytesIO()
-                         fig.savefig(buf, format='png', dpi=200, 
-                                    bbox_inches='tight', pad_inches=0.1)
-                         
-                         plt.close(fig)
-                         buf.seek(0)
-                         plot_bytes = buf.read()
-                         buf.close()
-                         
-                         logger.info("Query 4: Scatter plot with map background generated.")
-                     except Exception as plot_err:
-                         logger.error(f"Query 4: Failed to generate scatter plot: {plot_err}", exc_info=True)
-                         plot_bytes = None # Ensure plot_bytes is None if plotting fails
-                 else:
-                    plot_bytes = None # Ensure plot_bytes is None if no points after radius filter
-            else:
-                 logger.info("Query 4: DataFrame empty after bounding box/type filter.")
-                 plot_bytes = None # Ensure plot_bytes is None if no points before radius filter
+                # --- Generate Folium Map if results exist --- 
+                if not df_filtered.empty:
+                    try:
+                        # Create base map centered on the query point
+                        m = folium.Map(location=[center_lat, center_lon], zoom_start=13) # Adjust zoom as needed
 
+                        # Add Center Marker
+                        folium.Marker(
+                            [center_lat, center_lon],
+                            popup=f"Center ({center_lat:.4f}, {center_lon:.4f})",
+                            tooltip="Query Center",
+                            icon=folium.Icon(color='red', icon='info-sign')
+                        ).add_to(m)
+
+                        # Add Arrest Markers (limit number for performance if needed)
+                        max_markers = 1000 # Limit markers to avoid huge HTML
+                        df_to_plot = df_filtered.head(max_markers)
+                        if len(df_filtered) > max_markers:
+                             logger.warning(f"Query 4: Limiting map markers to {max_markers} out of {len(df_filtered)} results.")
+
+                        for idx, row in df_to_plot.iterrows():
+                            # Create popup text for each marker
+                            popup_text = f"<b>Arrest:</b> {row.get('Report ID', 'N/A')}<br>"
+                            popup_text += f"<b>Date:</b> {row.get('Arrest Date', '').strftime('%Y-%m-%d')}<br>"
+                            popup_text += f"<b>Address:</b> {row.get('Address', 'N/A')}<br>"
+                            popup_text += f"<b>Charge:</b> {row.get('Charge Group Description', 'N/A')}<br>"
+                            popup_text += f"<b>Coords:</b> ({row['LAT']:.4f}, {row['LON']:.4f})"
+                            
+                            folium.CircleMarker(
+                                location=[row['LAT'], row['LON']],
+                                radius=5,
+                                popup=folium.Popup(popup_text, max_width=300),
+                                tooltip=f"Arrest {row.get('Report ID', '')}",
+                                color='#3186cc', # Blueish color
+                                fill=True,
+                                fill_color='#3186cc',
+                                fill_opacity=0.7
+                            ).add_to(m)
+
+                        # Save map to an HTML string
+                        html_buffer = io.StringIO()
+                        m.save(html_buffer, close_file=False)
+                        map_html = html_buffer.getvalue()
+                        html_buffer.close()
+                        logger.info("Query 4: Folium map generated successfully.")
+
+                    except Exception as map_err:
+                        logger.error(f"Query 4: Failed to generate Folium map: {map_err}", exc_info=True)
+                        map_html = None # Ensure map_html is None if generation fails
+            
             # --- Prepare Results --- 
-            if df_filtered.empty:
-                return {'status': 'OK', 'data': [], 'headers': [], 'plot': None, 'title': f'Arrests within {radius_km}km of ({center_lat:.4f}, {center_lon:.4f}) (No Results)'}
-
-            output_cols = ['Report ID', 'Arrest Date', 'Area Name', 'Address', 'LAT', 'LON', 'Charge Group Description', 'Arrest Type Code', 'distance_km']
-            output_cols = [col for col in output_cols if col in df_filtered.columns]
-            result_df = df_filtered[output_cols].sort_values(by='distance_km')
-
-            if 'Arrest Date' in result_df.columns:
-                 result_df['Arrest Date'] = result_df['Arrest Date'].dt.strftime('%Y-%m-%d')
-            if 'distance_km' in result_df.columns:
-                 result_df['distance_km'] = result_df['distance_km'].round(2)
-
-            data = result_df.to_dict(orient='records')
-            headers = output_cols
-            logger.info(f"Query 4: Found {len(data)} results near ({center_lat:.4f}, {center_lon:.4f}). Preparing to send...")
-
             final_title = f'Arrests within {radius_km}km of ({center_lat:.4f}, {center_lon:.4f})'
             if arrest_type_code:
                  final_title += f' (Type: {arrest_type_code})'
+                 
+            if df_filtered.empty:
+                 # Return empty data but indicate no results in title
+                 final_title += " (No Results)"
+                 return {'status': 'OK', 'data': [], 'headers': [], 'map_html': None, 'title': final_title}
 
-            return {'status': 'OK', 'data': data, 'headers': headers, 'plot': plot_bytes, 'title': final_title}
+            # Prepare tabular data as before
+            output_cols = ['Report ID', 'Arrest Date', 'Area Name', 'Address', 'LAT', 'LON', 'Charge Group Description', 'Arrest Type Code', 'distance_km']
+            output_cols = [col for col in output_cols if col in df_filtered.columns]
+            result_df = df_filtered[output_cols].sort_values(by='distance_km')
+            if 'Arrest Date' in result_df.columns: result_df['Arrest Date'] = result_df['Arrest Date'].dt.strftime('%Y-%m-%d')
+            if 'distance_km' in result_df.columns: result_df['distance_km'] = result_df['distance_km'].round(2)
+            data = result_df.to_dict(orient='records')
+            headers = output_cols
+
+            # Return data AND map HTML
+            return {'status': 'OK', 'data': data, 'headers': headers, 'map_html': map_html, 'title': final_title}
 
         except KeyError as ke:
-            logger.error(f"Query 4 failed - Missing parameter/column: {ke}")
-            return {'status': 'error', 'message': f"Query failed: Missing expected parameter '{ke}' or data column."}
+             logger.error(f"Query 4 failed - Missing parameter/column: {ke}")
+             return {'status': 'error', 'message': f"Query failed: Missing expected parameter '{ke}' or data column."}
         except Exception as e:
             logger.error(f"Error processing Query 4: {e}", exc_info=True)
             return {'status': 'error', 'message': f"Error processing query: {e}"}
