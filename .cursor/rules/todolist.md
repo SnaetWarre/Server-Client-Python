@@ -15,4 +15,12 @@
         - [x] Y-axis: Count of arrests.
         - [x] Remove the Age distribution part of the graph.
         - [x] If both Male and Female checkboxes are selected, split each Descent bar into two segments (one for Male count, one for Female count).
-        - [x] If only one sex is selected, show a single bar per Descent Code. 
+        - [x] If only one sex is selected, show a single bar per Descent Code.
+- [ ] Improve Query 4 (Geographic Hotspots):
+    - [x] Add `folium` dependency to server environment.
+    - [ ] Server: Modify `process_query4` to generate an interactive HTML map using `folium` instead of a static plot.
+    - [ ] Server: Return the HTML map content in the query result.
+    - [ ] Client: Modify `on_query_result` to detect HTML map data.
+    - [ ] Client: Save received HTML to a temporary file.
+    - [ ] Client: Use `webbrowser` module to open the temporary HTML file.
+    - [ ] Client: Hide the internal plot area when opening the external map. 
