@@ -9,7 +9,7 @@
     - [x] Server: Add the list of Descent Codes *and descriptions* to the metadata sent to the client.
     - [x] Client: Replace the existing Descent input with a multi-select dropdown populated from metadata.
     - [x] Client/Shared: Define the mapping for Descent Codes (added to constants.py).
-    - [ ] Server: Update query processing logic to handle multiple Descent Codes.
+    - [x] Server: Update query processing logic to handle multiple Descent Codes (already uses .isin()).
     - [ ] Client: Modify the graph generation:
         - [ ] X-axis: Descent Code (using the mapped full names).
         - [ ] Y-axis: Count of arrests.
