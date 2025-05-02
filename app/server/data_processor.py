@@ -955,22 +955,20 @@ class DataProcessor:
                  df_filtered = df_filtered[df_filtered['distance_km'] <= radius_km]
                  logger.info(f"Query 4: After precise radius ({radius_km}km) filter, size: {len(df_filtered)}")
 
-                 # --- Generate Heatmap if results exist ---
+                 # --- Generate Scatter Plot if results exist --- 
                  if not df_filtered.empty:
                      try:
-                         logger.info(f"Query 4: Generating heatmap for {len(df_filtered)} points.")
+                         logger.info(f"Query 4: Generating scatter plot for {len(df_filtered)} points.")
                          
-                         # --- CREATE PLOT WITH MAP BACKGROUND ---
                          fig = plt.figure(figsize=(10, 10))
                          ax = fig.add_subplot(111)
                          
-                         # Create the KDE plot with some transparency
-                         sns.kdeplot(
-                             data=df_filtered, x='LON', y='LAT',
-                             fill=True, thresh=0.05, levels=10, 
-                             cmap="viridis", alpha=0.7, # Add transparency
-                             ax=ax
-                         )
+                         # --- Replace KDE plot with Scatter Plot --- 
+                         ax.scatter(df_filtered['LON'], df_filtered['LAT'], 
+                                    s=10,          # Size of points
+                                    alpha=0.6,     # Transparency 
+                                    label='Arrests') 
+                         # -----------------------------------------
                          
                          # Add center point
                          ax.scatter(center_lon, center_lat, color='red', s=80, marker='x', 
@@ -983,7 +981,6 @@ class DataProcessor:
                          ax.set_ylim(center_lat - lat_degrees_delta - buffer, 
                                     center_lat + lat_degrees_delta + buffer)
                          
-                         # Set aspect ratio to equal for correct geography
                          ax.set_aspect('equal')
                          
                          # Add the base map from OpenStreetMap
@@ -995,30 +992,35 @@ class DataProcessor:
                          except Exception as map_err:
                              logger.warning(f"Failed to add map basemap: {map_err}. Falling back to basic plot.")
                          
-                         # Add minimal styling
                          ax.set_xlabel('Longitude')
                          ax.set_ylabel('Latitude')
                          ax.legend(loc='upper right')
+                         # Update title
+                         plot_title = f'Arrest Locations within {radius_km}km of ({center_lat:.4f}, {center_lon:.4f})'
+                         if arrest_type_code:
+                              plot_title += f'\nType: {arrest_type_code}'
+                         ax.set_title(plot_title)
                          
-                         # --- Save with small padding ---
                          buf = io.BytesIO()
                          fig.savefig(buf, format='png', dpi=200, 
                                     bbox_inches='tight', pad_inches=0.1)
-                         # ---------------------------------
                          
                          plt.close(fig)
                          buf.seek(0)
                          plot_bytes = buf.read()
                          buf.close()
                          
-                         logger.info("Query 4: Heatmap with map background generated.")
+                         logger.info("Query 4: Scatter plot with map background generated.")
                      except Exception as plot_err:
-                         logger.error(f"Query 4: Failed to generate heatmap: {plot_err}", exc_info=True)
-                         plot_bytes = None
+                         logger.error(f"Query 4: Failed to generate scatter plot: {plot_err}", exc_info=True)
+                         plot_bytes = None # Ensure plot_bytes is None if plotting fails
+                 else:
+                    plot_bytes = None # Ensure plot_bytes is None if no points after radius filter
             else:
                  logger.info("Query 4: DataFrame empty after bounding box/type filter.")
+                 plot_bytes = None # Ensure plot_bytes is None if no points before radius filter
 
-            # --- Prepare Results ---
+            # --- Prepare Results --- 
             if df_filtered.empty:
                 return {'status': 'OK', 'data': [], 'headers': [], 'plot': None, 'title': f'Arrests within {radius_km}km of ({center_lat:.4f}, {center_lon:.4f}) (No Results)'}
 
@@ -1035,13 +1037,11 @@ class DataProcessor:
             headers = output_cols
             logger.info(f"Query 4: Found {len(data)} results near ({center_lat:.4f}, {center_lon:.4f}). Preparing to send...")
 
-            title = f'Arrests within {radius_km}km of ({center_lat:.4f}, {center_lon:.4f})'
+            final_title = f'Arrests within {radius_km}km of ({center_lat:.4f}, {center_lon:.4f})'
             if arrest_type_code:
-                 title += f' (Type: {arrest_type_code})'
+                 final_title += f' (Type: {arrest_type_code})'
 
-            # --- Add plot_bytes to the return dictionary ---
-            return {'status': 'OK', 'data': data, 'headers': headers, 'plot': plot_bytes, 'title': title}
-            # ---------------------------------------------
+            return {'status': 'OK', 'data': data, 'headers': headers, 'plot': plot_bytes, 'title': final_title}
 
         except KeyError as ke:
             logger.error(f"Query 4 failed - Missing parameter/column: {ke}")
