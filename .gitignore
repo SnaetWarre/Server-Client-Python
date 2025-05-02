@@ -1,5 +1,3 @@
-/Data/plots/*
-/Data/plots/.DS_Store
 /Data/Arrest_Data_from_2020_to_Present.csv
 /Data/processed_arrest_data.csv
 

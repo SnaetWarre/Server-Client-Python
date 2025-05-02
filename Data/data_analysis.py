@@ -14,6 +14,10 @@ import os
 plt.style.use('seaborn-v0_8-darkgrid')
 sns.set_palette('viridis')
 
+# Define and create the output directory for plots
+plots_dir = 'Data/plots'
+os.makedirs(plots_dir, exist_ok=True)
+print(f"Plots will be saved in: {plots_dir}")
 
 
 print("Starting data analysis and preprocessing...")
@@ -142,8 +146,10 @@ if 'Arrest Date' in df_clean.columns and pd.api.types.is_datetime64_dtype(df_cle
     plt.xlabel('Month')
     plt.ylabel('Number of Arrests')
     plt.grid(True)
+    save_path = os.path.join(plots_dir, 'arrests_over_time.png')
+    plt.savefig(save_path)
     plt.close()
-    print("Created plot: arrests_over_time.png")
+    print(f"Created plot: {save_path}")
 
 # Plot 2: Age distribution
 plt.figure(figsize=(12, 6))
@@ -151,8 +157,10 @@ sns.histplot(df_clean['Age'], bins=30, kde=True)
 plt.title('Age Distribution of Arrested Individuals')
 plt.xlabel('Age')
 plt.ylabel('Count')
+save_path = os.path.join(plots_dir, 'age_distribution.png')
+plt.savefig(save_path)
 plt.close()
-print("Created plot: age_distribution.png")
+print(f"Created plot: {save_path}")
 
 # Plot 3: Top 10 charge groups
 plt.figure(figsize=(14, 8))
@@ -161,8 +169,10 @@ sns.barplot(x=top_charges.index, y=top_charges.values)
 plt.title('Top 10 Charge Groups')
 plt.xticks(rotation=45, ha='right')
 plt.tight_layout()
+save_path = os.path.join(plots_dir, 'top_charges.png')
+plt.savefig(save_path)
 plt.close()
-print("Created plot: top_charges.png")
+print(f"Created plot: {save_path}")
 
 # Plot 4: Arrest distribution by area
 plt.figure(figsize=(14, 8))
@@ -171,8 +181,10 @@ sns.barplot(x=area_counts.index, y=area_counts.values)
 plt.title('Arrests by Area')
 plt.xticks(rotation=45, ha='right')
 plt.tight_layout()
+save_path = os.path.join(plots_dir, 'arrests_by_area.png')
+plt.savefig(save_path)
 plt.close()
-print("Created plot: arrests_by_area.png")
+print(f"Created plot: {save_path}")
 
 # Plot 5: Improved Heatmap of correlations between meaningful features
 plt.figure(figsize=(16, 14))
@@ -245,8 +257,10 @@ if len(existing_cols) > 1:  # Need at least 2 columns for correlation
     plt.xticks(rotation=45, ha='right', fontsize=10)
     plt.yticks(fontsize=10)
     plt.tight_layout()
+    save_path = os.path.join(plots_dir, 'improved_correlation_heatmap.png')
+    plt.savefig(save_path)
     plt.close()
-    print("Created plot: improved_correlation_heatmap.png")
+    print(f"Created plot: {save_path}")
 else:
     print("Not enough meaningful columns found for correlation analysis")
 
@@ -268,8 +282,10 @@ if 'Arrest Weekday' in df_clean.columns and 'Arrest Hour' in df_clean.columns:
     plt.xlabel('Hour of Day (24h)', fontsize=12)
     plt.ylabel('Day of Week', fontsize=12)
     plt.tight_layout()
+    save_path = os.path.join(plots_dir, 'arrests_by_day_and_hour.png')
+    plt.savefig(save_path)
     plt.close()
-    print("Created plot: arrests_by_day_and_hour.png")
+    print(f"Created plot: {save_path}")
 
 # Additional visualization 2: Age distribution by gender
 if 'Sex Code' in df_clean.columns and 'Age' in df_clean.columns:
