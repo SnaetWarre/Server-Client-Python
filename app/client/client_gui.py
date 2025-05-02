@@ -9,6 +9,8 @@ from datetime import datetime
 from PIL import Image, ImageQt
 import io
 import re # Import re module
+import webbrowser 
+import tempfile 
 
 # Add the parent directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -1108,31 +1110,38 @@ class ClientGUI(QMainWindow):
         logger.info(f"Received query result: {type(result)}")
 
         if isinstance(result, dict):
-            query_type = result.get('query_type', 'unknown') # Get query type if available
-            metadata_type = result.get('metadata_type') # Check if it's metadata
+            query_type = result.get('query_type', 'unknown')
+            metadata_type = result.get('metadata_type')
+            map_html_content = result.get('map_html')
 
             if metadata_type:
                 self.handle_metadata_result(metadata_type, result.get('data', []))
-            elif query_type in ['query3', 'query4'] and 'plot' in result and result['plot']:
-                # Handle plot data specifically for Query 3 or Query 4
+            elif map_html_content:
                 try:
-                    image_bytes = result['plot']
-                    # Optional base64 decode if server sent it encoded (we now send raw bytes from server)
-                    # import base64
-                    # if isinstance(image_bytes, str):
-                    #     image_bytes = base64.b64decode(image_bytes)
+                    # --- Handle HTML Map --- 
+                    # Create a temporary file with .html extension
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as temp_map_file:
+                        temp_map_file.write(map_html_content)
+                        temp_map_path = temp_map_file.name
+                        logger.info(f"Saved temporary map to: {temp_map_path}")
 
-                    plot_title = result.get('title', 'Query Result Plot') # Get title from result
-                    self.query_tab.display_plot(image_bytes, title=plot_title) # Pass title
-                    self.statusBar().showMessage("Graph/Heatmap result displayed.", 3000)
+                    # Open the temporary file in the default web browser
+                    # Use file:// URI scheme
+                    webbrowser.open(f'file://{os.path.realpath(temp_map_path)}')
+                    self.statusBar().showMessage("Opening interactive map in browser...", 3000)
+                    # Hide the internal plot area
+                    self.query_tab.plot_scroll_area.hide()
+                    self.query_tab.results_table.show()
+                    # --- End Handle HTML Map ---
                 except Exception as e:
-                    logger.error(f"Error processing plot data for {query_type}: {e}")
-                    self.query_tab.display_error_in_plot_area(f"Error processing plot: {e}")
-                    self.statusBar().showMessage("Error displaying plot.", 5000)
+                    logger.error(f"Error handling/opening map HTML: {e}", exc_info=True)
+                    QMessageBox.critical(self, "Map Error", f"Could not open interactive map: {e}")
+                    self.statusBar().showMessage("Error opening map.", 5000)
+                    # Optionally display the tabular data if map fails
+                    self.query_tab.display_results(result) # Display table data as fallback
             elif 'error' in result:
                  logger.error(f"Query Error from server or client processing: {result['error']}")
                  self.status_bar.showMessage(f"Query Error: {result['error']}", 5000)
-                 # Display the specific error in the table
                  self.query_tab.display_results({'data': [[result['error']]], 'headers': ['Error']})
             else:
                 # Handle tabular data for other queries or if Query 3/4 has no plot

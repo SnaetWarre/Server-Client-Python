@@ -20,7 +20,7 @@
     - [x] Add `folium` dependency to server environment.
     - [x] Server: Modify `process_query4` to generate an interactive HTML map using `folium` instead of a static plot.
     - [x] Server: Return the HTML map content in the query result.
-    - [ ] Client: Modify `on_query_result` to detect HTML map data.
-    - [ ] Client: Save received HTML to a temporary file.
-    - [ ] Client: Use `webbrowser` module to open the temporary HTML file.
-    - [ ] Client: Hide the internal plot area when opening the external map. 
+    - [x] Client: Modify `on_query_result` to detect HTML map data.
+    - [x] Client: Save received HTML to a temporary file.
+    - [x] Client: Use `webbrowser` module to open the temporary HTML file.
+    - [x] Client: Hide the internal plot area when opening the external map. 
