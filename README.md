@@ -25,8 +25,12 @@ A client-server socket application for dataset analysis and querying, with user 
 ## Requirements
 
 - Python 3.6 or higher
-- PySide6 (Qt for Python)
-- Socket, threading, and logging modules
+- PySide6 >= 6.4.0
+- seaborn >= 0.12.0
+- pandas >= 1.5.0
+- matplotlib >= 3.6.0
+- contextily >= 1.3.0
+- folium
 
 
 
@@ -78,17 +82,5 @@ A client-server socket application for dataset analysis and querying, with user 
 
 ## Dataset Integration
 
-This application is designed to work with datasets from Kaggle.com. The server holds the dataset and processes queries from clients, while clients can request different types of analysis without direct access to the dataset.
+This application is designed to work with datasets from Kaggle.com. [Arrest Data in Los Angeles](https://www.kaggle.com/datasets/arsri1/arrest-data-in-los-angeles/data) The server holds the dataset and processes queries from clients, while clients can request different types of analysis without direct access to the dataset.
 
-To integrate your own dataset:
-1. Add dataset loading code in the ServerBackend class in server_gui.py
-2. Implement query execution logic in the handle_query method
-3. Update the query types in the client_advanced.py file to match your dataset's capabilities
-
-## Logs
-
-Both the client and server generate log files:
-- `Client/logs/client_[timestamp].log`
-- `Server/logs/server_[timestamp].log`
-
-These logs contain information about connections, disconnections, messages, queries, and errors. 
