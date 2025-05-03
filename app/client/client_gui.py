@@ -8,7 +8,9 @@ from datetime import datetime
 import re 
 import webbrowser 
 import tempfile
-from pathlib import Path # <--- ADD THIS IMPORT
+from pathlib import Path 
+
+import matplotlib.pyplot as plt
 
 # Add the parent directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -911,6 +913,9 @@ class ClientGUI(QMainWindow):
     @Slot(object) # Type hint for the Figure object
     def on_plot_clicked(self, fig):
         """Handle the plot_clicked signal from QueryWidget."""
+        # --- ADD LOGGING ---
+        logger.info(f"on_plot_clicked received signal. Figure type: {type(fig)}")
+        # -------------------
         if fig is None:
             logger.warning("on_plot_clicked received None figure.")
             return
@@ -924,6 +929,9 @@ class ClientGUI(QMainWindow):
         
         # Create and show the plot viewer dialog
         try:
+            # --- ADD LOGGING ---
+            logger.info(f"Creating and showing PlotViewerDialog with title: {dialog_title}")
+            # -------------------
             dialog = PlotViewerDialog(fig, dialog_title, self) # Pass self as parent
             dialog.exec() # Use exec() for modal dialog
         except Exception as e:
@@ -1010,6 +1018,82 @@ class ClientGUI(QMainWindow):
             logger.debug(f"Connected notification reset handler for tab {tab_index}")
         except Exception as e:
             logger.error(f"Failed to connect notification handler: {e}")
+
+    def display_plot_result(self, fig, ax, query_id, result_data):
+        """Displays the plot result in the appropriate tab using FigureLabel."""
+        logger.info(f"Displaying plot for Query {query_id}")
+        try:
+            # Render the figure to a QPixmap
+            canvas = FigureCanvasQTAgg(fig)
+            canvas.draw() # Ensure the canvas is drawn
+            pixmap = QPixmap(canvas.size())
+            canvas.render(pixmap)
+
+            # Example: Assuming a dictionary to map query_id to plot labels
+            plot_labels = {
+                3: self.query3_plot_label,
+                4: self.query4_plot_label
+                # Add other query plot labels if they exist
+            }
+
+            if query_id in plot_labels:
+                plot_label = plot_labels[query_id]
+                plot_label.setPixmap(pixmap)
+                plot_label.setTitle(f"Query {query_id} Plot Details") # Set title for dialog
+
+                # Store the original figure object on the label for later use
+                plot_label.figure = fig
+
+                # Connect the label's clicked signal to the handler
+                # Use a lambda to pass the specific label that was clicked
+                try:
+                    # Disconnect previous connection if any
+                    plot_label.clicked.disconnect(self.on_plot_label_clicked)
+                except (TypeError, RuntimeError):
+                    # Catch TypeError if no connection exists or RuntimeError
+                    pass # No connection existed or already disconnected
+                plot_label.clicked.connect(lambda p, t, lbl=plot_label: self.on_plot_label_clicked(lbl))
+
+            else:
+                logger.warning(f"No plot label found for Query ID: {query_id}")
+                # Close the figure if not used
+                plt.close(fig)
+
+            # Do NOT close the figure here if it's stored on the label
+            # plt.close(fig) # <-- REMOVE or COMMENT OUT this line
+
+        except Exception as e:
+            logger.error(f"Error displaying plot for Query {query_id}: {e}", exc_info=True)
+            QMessageBox.critical(self, "Plot Error", f"Could not display plot for Query {query_id}.\nError: {e}")
+            # Ensure figure is closed on error if it exists
+            if 'fig' in locals() and fig:
+                plt.close(fig)
+
+    # --- ADD THIS NEW METHOD --- #
+    @Slot(FigureLabel) # Type hint for the FigureLabel object
+    def on_plot_label_clicked(self, label_clicked):
+        """Handles the click event from a FigureLabel."""
+        logger.info(f"Plot label clicked: {label_clicked.title}")
+        if hasattr(label_clicked, 'figure') and label_clicked.figure:
+            try:
+                # Close existing dialog if open
+                if self.plot_dialog and self.plot_dialog.isVisible():
+                    self.plot_dialog.close()
+
+                # Create and show the new plot viewer dialog
+                self.plot_dialog = PlotViewerDialog(label_clicked.figure, title=label_clicked.title, parent=self)
+                self.plot_dialog.show()
+            except Exception as e:
+                logger.error(f"Error creating/showing plot dialog: {e}", exc_info=True)
+                QMessageBox.critical(self, "Dialog Error", f"Could not open plot viewer.\nError: {e}")
+        else:
+            logger.warning("Clicked plot label does not have a valid 'figure' attribute.")
+            QMessageBox.warning(self, "Plot Error", "Could not retrieve plot data for enlargement.")
+
+    # Remove or comment out the old on_plot_clicked method if it exists
+    # @Slot(object)
+    # def on_plot_clicked(self, fig):
+    #     ...
 
 
 if __name__ == "__main__":

@@ -199,7 +199,6 @@ class QueryWidget(QWidget):
 
         # Store the current figure for the viewer dialog
         self.current_figure = None
-        # Install event filter on the canvas itself for clicks
         self.plot_canvas.installEventFilter(self)
 
     def eventFilter(self, source, event):
@@ -207,6 +206,9 @@ class QueryWidget(QWidget):
         # Check if the source is the plot canvas
         if source == self.plot_canvas and event.type() == QEvent.MouseButtonPress:
             if event.button() == Qt.LeftButton and self.current_figure:
+                # --- ADD LOGGING ---
+                logger.info("Plot canvas clicked, emitting plot_clicked signal with figure.")
+                # -------------------
                 # Emit signal with the stored figure object
                 self.plot_clicked.emit(self.current_figure)
                 return True # Event handled
@@ -420,6 +422,9 @@ class QueryWidget(QWidget):
             
             # Set the new canvas as the widget for the scroll area
             self.plot_scroll_area.setWidget(self.plot_canvas)
+
+            # Re-install the event filter on the NEW canvas
+            self.plot_canvas.installEventFilter(self)
 
             self.results_table.hide()
             self.plot_scroll_area.show()
