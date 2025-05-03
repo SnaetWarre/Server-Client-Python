@@ -13,6 +13,7 @@ import struct
 import json
 import base64
 import tempfile
+import uuid
 
 # Add the parent directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -51,6 +52,11 @@ class Client:
         
         # Queue for incoming messages
         self.message_queue = queue.Queue()
+        
+        # For synchronizing requests/responses
+        self._response_events = {}
+        self._response_data = {}
+        self._response_lock = threading.Lock()
         
         # Callbacks for the GUI
         self.on_connection_status_change = None
@@ -213,64 +219,107 @@ class Client:
 
     def process_message(self, message):
         """Process a message from the server"""
-        logger.info(f"Received message from server: {message.msg_type}")
-        
+        logger.info(f"Received message from server: {message.msg_type}, data keys: {list(message.data.keys()) if isinstance(message.data, dict) else 'N/A'}")
+
+        signaled_event = False
+        # --- Generalized Request/Response Synchronization ---
+        # Check EVERY message for a request_id
+        request_id = message.data.get('request_id')
+        if request_id:
+            event_to_signal = None
+            with self._response_lock:
+                if request_id in self._response_events:
+                    event_to_signal = self._response_events.pop(request_id)
+                    # Store the raw data for the waiting thread
+                    self._response_data[request_id] = message.data
+                    signaled_event = True # Mark that we signaled an event for this request
+
+            if event_to_signal:
+                logger.debug(f"Signaling event for request_id: {request_id}")
+                event_to_signal.set() # Wake up the waiting thread (e.g., register)
+                # For direct request/response pairs handled by waiting methods (like register),
+                # we might not need further processing here.
+                # However, some responses might need both signaling AND further handling (like login status update).
+                # We'll let the specific handlers below decide if they need to run based on signaled_event.
+        # --- End Generalized Synchronization ---
+
         try:
+            # --- Specific Message Type Handling ---
             if message.msg_type == MSG_LOGIN:
+                # Login response needs to update client state even if it was a direct response
                 self.handle_login_response(message.data)
             elif message.msg_type == MSG_LOGOUT:
+                 # Logout also needs state update
                 self.handle_logout_response(message.data)
-            elif message.msg_type == MSG_REGISTER:
-                self.handle_register_response(message.data)
             elif message.msg_type == MSG_QUERY_RESULT:
-                # Decode data/plot *before* calling the GUI callback
-                processed_data = message.data.copy() # Start with a copy
-                encoded_df_data = processed_data.get('data')
-                encoded_plot_data = processed_data.get('plot')
+                # Query results are usually asynchronous or might be metadata responses,
+                # handle them if an event wasn't already signaled for a specific request ID
+                # (though query requests *shouldn't* use the event system currently)
+                if not signaled_event: # Only process fully if not handled by event sync
+                     # Decode data/plot *before* calling the GUI callback
+                    processed_data = message.data.copy() # Start with a copy
 
-                if isinstance(encoded_df_data, str):
-                    try:
-                        processed_data['data'] = decode_dataframe(encoded_df_data)
-                        logger.debug("PROCESS_MESSAGE: Decoded dataframe successfully.")
-                    except Exception as e:
-                        logger.error(f"PROCESS_MESSAGE: Error decoding dataframe: {e}", exc_info=True)
-                        processed_data['data'] = [] # Replace with empty list on error
-                        processed_data['error'] = processed_data.get('error', '') + f" Client error: Failed to decode results ({e})"
-                
-                if isinstance(encoded_plot_data, str):
-                    try:
-                        # Decode base64 string to bytes for display
-                        processed_data['plot'] = base64.b64decode(encoded_plot_data.encode('utf-8'))
-                        logger.debug("PROCESS_MESSAGE: Decoded plot data successfully.")
-                    except Exception as e:
-                        logger.error(f"PROCESS_MESSAGE: Error decoding plot data: {e}", exc_info=True)
-                        processed_data['plot'] = None # Set plot to None on error
-                        processed_data['error'] = processed_data.get('error', '') + f" Client error: Failed to decode plot ({e})"
+                    # encoded_df_data = processed_data.get('data')
+                    # encoded_plot_data = processed_data.get('plot')
+                    # 
+                    # if isinstance(encoded_df_data, str):
+                    #     try:
+                    #         # THIS FUNCTION DOES NOT EXIST
+                    #         # processed_data['data'] = decode_dataframe(encoded_df_data) 
+                    #         logger.error("decode_dataframe was called but doesn't exist!") # Log error
+                    #         processed_data['data'] = [] # Set to empty list on error
+                    #         processed_data['error'] = "Client error: Data decoding failed."
+                    #         # logger.debug("PROCESS_MESSAGE: Decoded dataframe successfully.")
+                    #     except Exception as e:
+                    #         logger.error(f"PROCESS_MESSAGE: Error decoding dataframe: {e}", exc_info=True)
+                    #         processed_data['data'] = [] # Replace with empty list on error
+                    #         processed_data['error'] = processed_data.get('error', '') + f" Client error: Failed to decode results ({e})"
+                    # 
+                    # if isinstance(encoded_plot_data, str):
+                    #     try:
+                    #         # Figure object is pickled directly, no need to base64 decode
+                    #         # processed_data['plot'] = base64.b64decode(encoded_plot_data.encode('utf-8'))
+                    #         logger.error("Plot base64 decoding was attempted but is not necessary!") # Log error
+                    #         processed_data['plot'] = None # Set plot to None on error
+                    #         processed_data['error'] = "Client error: Plot decoding failed."
+                    #         # logger.debug("PROCESS_MESSAGE: Decoded plot data successfully.")
+                    #     except Exception as e:
+                    #         logger.error(f"PROCESS_MESSAGE: Error decoding plot data: {e}", exc_info=True)
+                    #         processed_data['plot'] = None # Set plot to None on error
+                    #         processed_data['error'] = processed_data.get('error', '') + f" Client error: Failed to decode plot ({e})"
 
-                # Now call the callback with the *processed* data
-                if self.on_query_result:
-                    logger.info(f"PROCESS_MESSAGE (Query Result): Calling on_query_result callback. Processed keys: {list(processed_data.keys())}")
-                    self.on_query_result(processed_data)
-                
-                # Log success using original (or processed) data for context
-                query_type = processed_data.get('query_type', 'unknown')
-                metadata_type = processed_data.get('metadata_type', 'N/A')
-                log_identifier = metadata_type if metadata_type != 'N/A' else query_type
-                logger.info(f"Received successful query/metadata result for {log_identifier}")
+                    if self.on_query_result:
+                        logger.info(f"PROCESS_MESSAGE (Query Result - Async/Metadata): Calling on_query_result callback. Processed keys: {list(processed_data.keys())}")
+                        self.on_query_result(processed_data)
+
+                    # Log success using original (or processed) data for context
+                    query_type = processed_data.get('query_type', 'unknown')
+                    metadata_type = processed_data.get('metadata_type', 'N/A')
+                    log_identifier = metadata_type if metadata_type != 'N/A' else query_type
+                    logger.info(f"Received successful query/metadata result for {log_identifier}")
+                else:
+                     logger.debug(f"Skipping further processing for {message.msg_type} as event was signaled for request_id {request_id}")
+
             elif message.msg_type == MSG_SERVER_MESSAGE:
+                # Server messages are asynchronous, always handle them
                 self.handle_server_message(message.data)
             elif message.msg_type == 'ERROR':
+                # Error messages might be related to a request (handled by event signal)
+                # OR they might be unsolicited. Handle state/GUI updates regardless.
                 self.handle_error(message.data)
             else:
-                logger.warning(f"Unknown message type: {message.msg_type}")
-                # Add to message queue for unknown messages
-                self.message_queue.put({
-                    'type': 'info',
-                    'timestamp': datetime.now().isoformat(),
-                    'message': f"Received unknown message type: {message.msg_type}"
-                })
+                # Handle unknown messages if event wasn't signaled
+                if not signaled_event:
+                    logger.warning(f"Unknown message type: {message.msg_type}")
+                    # Add to message queue for unknown messages
+                    self.message_queue.put({
+                        'type': 'info',
+                        'timestamp': datetime.now().isoformat(),
+                        'message': f"Received unknown message type: {message.msg_type}"
+                    })
+
         except Exception as e:
-            logger.error(f"Error processing message: {e}")
+            logger.error(f"Error processing message body for type {message.msg_type}: {e}", exc_info=True)
             # Add error to message queue
             self.message_queue.put({
                 'type': 'error',
@@ -350,35 +399,6 @@ class Client:
                 'message': f"Logout failed: {error_message}"
             })
     
-    def handle_register_response(self, data):
-        """Handle register response from the server"""
-        status = data.get('status')
-        
-        if status == STATUS_OK:
-            logger.info("Registration successful")
-            
-            # Add to message queue
-            self.message_queue.put({
-                'type': 'info',
-                'timestamp': datetime.now().isoformat(),
-                'message': "Registration successful. You can now log in."
-            })
-        else:
-            error_message = data.get('message', 'Registration failed')
-            
-            # Notify GUI if callback is set
-            if self.on_error:
-                self.on_error(error_message)
-            
-            logger.error(f"Registration failed: {error_message}")
-            
-            # Add to message queue
-            self.message_queue.put({
-                'type': 'error',
-                'timestamp': datetime.now().isoformat(),
-                'message': f"Registration failed: {error_message}"
-            })
-    
     def handle_server_message(self, data):
         """Handle server message"""
         message_text = data.get('message', '')
@@ -415,19 +435,37 @@ class Client:
     def handle_error(self, data):
         """Handle error message from the server"""
         error_message = data.get('message', 'Unknown error')
-        
-        # Notify GUI if callback is set
+        request_id = data.get('request_id') # Check if error is tied to a request
+
+        # --- Signal event if this error corresponds to a request ---
+        # (This part was missing before)
+        signaled_event = False
+        if request_id:
+             event_to_signal = None
+             with self._response_lock:
+                  if request_id in self._response_events:
+                       event_to_signal = self._response_events.pop(request_id)
+                       # Store the error data for the waiting thread
+                       self._response_data[request_id] = data
+                       signaled_event = True
+
+             if event_to_signal:
+                  logger.debug(f"Signaling event for ERROR response (request_id: {request_id})")
+                  event_to_signal.set()
+        # ---------------------------------------------------------
+
+        # Notify GUI via callback regardless (useful for unsolicited errors too)
         if self.on_error:
             self.on_error(error_message)
-        
-        logger.error(f"Server error: {error_message}")
-        
-        # Add to message queue
-        self.message_queue.put({
-            'type': 'error',
-            'timestamp': datetime.now().isoformat(),
-            'message': f"Server error: {error_message}"
-        })
+
+        logger.error(f"Server error: {error_message} (Request ID: {request_id or 'N/A'})")
+
+        # Add to message queue (optional, callback might be sufficient)
+        # self.message_queue.put({
+        #     'type': 'error',
+        #     'timestamp': datetime.now().isoformat(),
+        #     'message': f"Server error: {error_message}"
+        # })
     
     def register(self, name, nickname, email, password):
         """Register a new user"""
@@ -436,20 +474,77 @@ class Client:
             return False
         
         # Create message
-        message = Message(MSG_REGISTER, {
+        data = {
             'name': name,
             'nickname': nickname,
             'email': email,
             'password': password
-        })
+        }
+        # Generate unique request ID
+        request_id = str(uuid.uuid4())
+        data['request_id'] = request_id
         
-        # Send message
-        if send_message(self.socket, message):
-            logger.info(f"Sent registration request for {nickname} ({email})")
-            return True
+        request_data = Message(MSG_REGISTER, data)
+        
+        # Send the message directly using send_message, bypassing send_request
+        logger.info(f"Sending registration request: Type={request_data.msg_type}, Payload={request_data.data}")
+        success = False # Assume failure initially
+        try:
+            if self.connected and self.socket:
+                success = send_message(self.socket, request_data)
+                if not success:
+                    logger.error("send_message returned False for registration request.")
+                    # Consider if disconnect logic is needed here too
+            else:
+                logger.error("Cannot send registration: Socket not connected.")
+        except Exception as e:
+            logger.error(f"Exception sending registration request: {e}", exc_info=True)
+            # Handle potential disconnect on send error
+            self.connected = False
+            self.running = False
+            if self.on_connection_status_change:
+                self.on_connection_status_change(False)
+            # success remains False
+        
+        if not success:
+            return False, "Failed to send registration request."
+        
+        # Wait for the response using the unique request ID
+        response_key = request_id # Use unique ID as the key
+        event = threading.Event()
+        with self._response_lock:
+            self._response_events[response_key] = event
+            # Clear any stale data for this key
+            if response_key in self._response_data:
+                del self._response_data[response_key]
+        
+        logger.info(f"Waiting for registration response...")
+        event_set = event.wait(timeout=10.0) # Wait up to 10 seconds
+        
+        # Retrieve the response data
+        response_data = None
+        with self._response_lock:
+            # Clean up event reference
+            if response_key in self._response_events:
+                 # This happens if timeout occurred before event was set
+                 del self._response_events[response_key]
+                 logger.warning("Registration response event removed after timeout.")
+
+            if response_key in self._response_data:
+                response_data = self._response_data.pop(response_key)
+        
+        if not event_set or not response_data:
+            logger.error("Registration response timed out or data missing.")
+            return False, "Registration timed out or server did not respond correctly."
+        
+        # Process the response data retrieved via the event
+        if response_data.get('status') == STATUS_OK:
+            logger.info(f"Registration successful (Response received): {response_data.get('message')}")
+            return True, response_data.get('message', "Registration successful.")
         else:
-            logger.error(f"Failed to send registration request")
-            return False
+            error_msg = response_data.get('message', "Registration failed: Unknown error")
+            logger.warning(f"Registration failed (Response received): {error_msg}")
+            return False, error_msg
     
     def login(self, email, password):
         """Log in to the server"""

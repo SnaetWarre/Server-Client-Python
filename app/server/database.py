@@ -7,8 +7,6 @@ import datetime
 import pandas as pd
 import threading
 import queue
-import time
-from pathlib import Path
 import logging
 import contextlib
 import json
@@ -21,7 +19,7 @@ print(f"SQLite3 thread safety level: {sqlite3.threadsafety}")
 class Database:
     """Thread-safe database using a connection pool for storing client info and query history"""
     
-    def __init__(self, db_path='app/server/server_data.db', pool_size=5):
+    def __init__(self, db_path='app/server/server_data.db', pool_size=10):
         """Initialize database pool and create tables if they don't exist"""
         self.db_path = db_path
         self.pool_size = pool_size
@@ -331,24 +329,36 @@ class Database:
     
     def get_all_clients(self):
         """Get all registered clients including their last login time."""
-        query = """
-            SELECT 
-                c.id, 
-                c.name, 
-                c.nickname, 
-                c.email, 
-                c.registration_date,
-                MAX(s.start_time) as last_login -- Get the latest session start time as last login
-            FROM clients c
-            LEFT JOIN sessions s ON c.id = s.client_id
-            GROUP BY c.id, c.name, c.nickname, c.email, c.registration_date
-            ORDER BY c.registration_date DESC
-        """
-        with self.get_connection_context() as conn:
-            cursor = conn.cursor()
-            cursor.execute(query)
-            # Convert rows to dicts before connection is returned
-            return [dict(row) for row in cursor.fetchall()]
+        try:
+            # Use the context manager to ensure connection is returned
+            with self.get_connection_context() as conn:
+                cursor = conn.cursor()
+                
+                # Query to get all clients with their registration date, last login, and total queries
+                query = """
+                    SELECT 
+                        c.id, 
+                        c.nickname, 
+                        c.registration_date as registration_date, -- Renamed for clarity
+                        (SELECT MAX(s.start_time) FROM sessions s WHERE s.client_id = c.id) as last_seen, -- Get latest login time
+                        (SELECT COUNT(*) FROM queries q WHERE q.client_id = c.id) as total_queries
+                    FROM clients c
+                    ORDER BY c.registration_date DESC;
+                """
+                
+                cursor.execute(query)
+                clients = cursor.fetchall()
+
+                # Convert rows to dicts before connection context closes
+                return [dict(row) for row in clients]
+        except sqlite3.Error as sql_err:
+             # Catch specific database errors
+             logger.error(f"Database error fetching all clients: {sql_err}", exc_info=True)
+             return []
+        except Exception as e:
+            # Catch any other unexpected errors (like TimeoutError from get_connection_context)
+            logger.error(f"Error fetching all clients: {e}", exc_info=True)
+            return []
     
     def get_client_queries(self, client_id):
         """Get all queries for a client"""
@@ -408,4 +418,89 @@ class Database:
         with self.get_connection_context() as conn:
             cursor = conn.cursor()
             cursor.execute("UPDATE messages SET read = 1 WHERE id = ?", (message_id,))
-            conn.commit() 
+            conn.commit()
+    
+    def get_client_details_by_id(self, client_id):
+        """Get detailed information for a specific client ID."""
+        details = {}
+        try:
+            with self.get_connection_context() as conn:
+                cursor = conn.cursor()
+
+                # 1. Get basic client info
+                cursor.execute("SELECT id, name, nickname, email, registration_date FROM clients WHERE id = ?", (client_id,))
+                client_row = cursor.fetchone()
+                if not client_row:
+                    logger.warning(f"No client found with ID {client_id} for details.")
+                    return None # Return None if client doesn't exist
+                details = dict(zip([col[0] for col in cursor.description], client_row))
+
+                # Get last login time from sessions table
+                cursor.execute("SELECT MAX(start_time) FROM sessions WHERE client_id = ?", (client_id,))
+                last_login_result = cursor.fetchone()
+                details['last_login'] = last_login_result[0] if last_login_result else None
+
+                # 2. Get query statistics
+                cursor.execute("""
+                    SELECT query_type, COUNT(*) as count
+                    FROM queries
+                    WHERE client_id = ?
+                    GROUP BY query_type
+                    ORDER BY count DESC
+                """, (client_id,))
+                query_stats = cursor.fetchall()
+                details['query_stats'] = [
+                    dict(zip([col[0] for col in cursor.description], row))
+                    for row in query_stats
+                ]
+
+                # 3. Get recent session history (e.g., last 10 sessions)
+                cursor.execute("""
+                    SELECT id, start_time, end_time, address,
+                           (strftime('%s', end_time) - strftime('%s', start_time)) as duration_seconds
+                    FROM sessions
+                    WHERE client_id = ?
+                    ORDER BY start_time DESC
+                    LIMIT 10
+                """, (client_id,))
+                session_history = cursor.fetchall()
+                details['session_history'] = [
+                    dict(zip([col[0] for col in cursor.description], row))
+                    for row in session_history
+                ]
+
+            logger.info(f"Successfully fetched details for client ID {client_id}")
+            return details
+
+        except sqlite3.Error as sql_err:
+            logger.error(f"Database error fetching details for client ID {client_id}: {sql_err}", exc_info=True)
+            # Return partial details if basic info was fetched?
+            return details # Return whatever was fetched, might be just basic info or empty
+        except Exception as e:
+            logger.error(f"Unexpected error fetching details for client ID {client_id}: {e}", exc_info=True)
+            return details # Return whatever was fetched
+
+    def get_daily_query_counts(self):
+        """Get daily counts for each query type."""
+        query = """
+            SELECT
+                date(timestamp) as query_date,
+                query_type,
+                COUNT(*) as count
+            FROM queries
+            GROUP BY query_date, query_type
+            ORDER BY query_date ASC, query_type ASC;
+        """
+        try:
+            with self.get_connection_context() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query)
+                results = cursor.fetchall()
+                # Convert rows to dicts
+                return [dict(zip([col[0] for col in cursor.description], row)) for row in results]
+        except sqlite3.Error as sql_err:
+            logger.error(f"Database error fetching daily query counts: {sql_err}", exc_info=True)
+            return [] # Return empty list on error
+        except Exception as e:
+            logger.error(f"Unexpected error fetching daily query counts: {e}", exc_info=True)
+            return [] 

@@ -17,7 +17,6 @@ import folium
 from folium.plugins import MarkerCluster
 import logging
 from datetime import datetime
-import base64 # No longer needed for plot encoding
 import urllib.request # No longer needed for OSM background
 from math import log, tan, pi, cos, sinh, atan
 import uuid # For unique filenames
@@ -31,41 +30,6 @@ logger = logging.getLogger('data_processor')
 
 # Import the mapping
 from shared.constants import DESCENT_CODE_MAP
-
-def add_osm_background(ax, bbox, zoom=13):
-    """Add OpenStreetMap background to plot using matplotlib"""
-    
-    def deg2num(lat_deg, lon_deg, zoom):
-        lat_rad = lat_deg * pi / 180.0
-        n = 2.0 ** zoom
-        xtile = int((lon_deg + 180.0) / 360.0 * n)
-        ytile = int((1.0 - log(tan(lat_rad) + (1 / cos(lat_rad))) / pi) / 2.0 * n)
-        return (xtile, ytile)
-    
-    xmin, ymin, xmax, ymax = bbox
-    
-    try:
-        x1, y1 = deg2num(ymin, xmin, zoom)
-        
-        # Download the OSM tile with proper headers
-        url = f"https://tile.openstreetmap.org/{zoom}/{x1}/{y1}.png"
-        
-        # Create a proper request with User-Agent header
-        headers = {
-            'User-Agent': 'ArrestDataViewer/1.0 (educational project; warresnaet@icloud.com)'
-        }
-        req = urllib.request.Request(url, headers=headers)
-        
-        with urllib.request.urlopen(req) as response:
-            img_data = response.read()
-        
-        img = plt.imread(io.BytesIO(img_data), format='png')
-        ax.imshow(img, extent=[xmin, xmax, ymin, ymax], aspect='equal', alpha=0.7)
-        logger.info("Successfully added OSM background map")
-        return True
-    except Exception as e:
-        logger.error(f"Error loading map background: {e}")
-        return False
 
 class DataProcessor:
     """Data processor for handling queries on the dataset"""

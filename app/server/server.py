@@ -14,6 +14,7 @@ import sqlite3
 import base64
 import re # Import re module
 import tempfile # <-- Add tempfile import
+import uuid # Import uuid module
 
 # Add the parent directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -186,15 +187,18 @@ class ClientHandler(threading.Thread):
         email = data.get('email')
         password = data.get('password')
         
+        # Get the request ID sent by the client
+        request_id = data.get('request_id')
+        
         # Validate data
         if not all([name, nickname, email, password]):
-            self.send_error("Registration failed: missing required fields")
+            self.send_error("Registration failed: missing required fields", request_id=request_id)
             return
         
         # Basic email format validation using regex
         email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$" # Corrected closing quote
         if not re.match(email_regex, email):
-             self.send_error("Registration failed: invalid email format")
+             self.send_error("Registration failed: invalid email format", request_id=request_id)
              return
 
         try:
@@ -205,14 +209,18 @@ class ClientHandler(threading.Thread):
                 logger.info(f"Registered new client: {nickname} ({email})")
                 self.send_response(MSG_REGISTER, {
                     'status': STATUS_OK,
-                    'message': "Registration successful"
+                    'message': "Registration successful",
+                    'request_id': request_id # Include request ID in response
                 })
+                # Trigger the callback to notify GUI about new client registration
+                if self.server.on_all_clients_update:
+                    self.server.on_all_clients_update()
             else:
                 logger.warning(f"Registration failed for {nickname} ({email}): Already exists")
-                self.send_error("Registration failed: nickname or email already exists")
+                self.send_error("Registration failed: nickname or email already exists", request_id=request_id)
         except Exception as e:
             logger.error(f"Error during registration: {e}")
-            self.send_error(f"Registration failed: {str(e)}")
+            self.send_error(f"Registration failed: {str(e)}", request_id=request_id)
     
     def handle_login(self, data):
         """Handle a login request"""
@@ -407,6 +415,10 @@ class ClientHandler(threading.Thread):
 
             # Log to server activity
             self.server.log_activity(f"Query {query_type_id} processed for {self.client_info['nickname']}")
+            
+            # --- Notify server to trigger potential GUI updates (e.g., All Clients list) ---
+            self.server.notify_query_processed(self.client_info['id'])
+            # ----------------------------------------------------------------------------------
 
         except AttributeError as ae:
              logger.error(f"DataProcessor missing method for query '{query_type_id}': {ae}", exc_info=True)
@@ -467,12 +479,15 @@ class ClientHandler(threading.Thread):
         message = Message(msg_type, data)
         send_message(self.socket, message)
     
-    def send_error(self, error_message):
+    def send_error(self, error_message, request_id=None):
         """Send an error response to the client"""
-        self.send_response(msg_type='ERROR', data={
+        response_data = {
             'status': STATUS_ERROR,
             'message': error_message
-        })
+        }
+        if request_id:
+            response_data['request_id'] = request_id # Add request ID if provided
+        self.send_response(msg_type='ERROR', data=response_data)
     
     def queue_message(self, message):
         """Queue a message to be sent to the client"""
@@ -595,6 +610,7 @@ class Server:
         # Server GUI callbacks
         self.on_activity_log = None
         self.on_client_list_update = None
+        self.on_all_clients_update = None # Callback for new registrations
     
     def start(self):
         """Start the server"""
@@ -871,6 +887,11 @@ class Server:
         """Get all registered clients from database"""
         return self.db.get_all_clients()
     
+    def get_client_details(self, client_id):
+        """Get detailed information for a specific client by ID."""
+        # Directly call the database method
+        return self.db.get_client_details_by_id(client_id)
+    
     def get_client_queries(self, client_id):
         """Get all queries for a client"""
         return self.db.get_client_queries(client_id)
@@ -889,6 +910,10 @@ class Server:
         
         return stats
     
+    def get_daily_query_counts(self):
+        """Get daily query counts per type from the database."""
+        return self.db.get_daily_query_counts()
+    
     def log_activity(self, message):
         """Log server activity"""
         timestamp = datetime.now().isoformat()
@@ -906,6 +931,12 @@ class Server:
         # Notify GUI if callback is set
         if self.on_activity_log:
             self.on_activity_log(timestamp, message)
+
+    def notify_query_processed(self, client_id):
+        """Called when a client query is processed, triggers an update of the 'All Clients' list."""
+        logger.info(f"Query processed for client {client_id}, triggering all clients list update.")
+        if self.on_all_clients_update:
+            self.on_all_clients_update() # Reuse existing callback
 
 
 if __name__ == "__main__":
