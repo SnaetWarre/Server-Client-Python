@@ -9,23 +9,23 @@ matplotlib.use('Agg') # Use the Agg backend for non-interactive plotting in thre
 import os
 import pandas as pd
 import numpy as np
-# import matplotlib.pyplot as plt # No longer needed for Query 4 plot
-# import seaborn as sns # No longer needed for Query 4 plot
+import matplotlib.pyplot as plt # No longer needed for Query 4 plot
+import seaborn as sns # No longer needed for Query 4 plot
 import io
-# from matplotlib.figure import Figure # No longer needed
+from matplotlib.figure import Figure # No longer needed
 import folium
 from folium.plugins import MarkerCluster
 import logging
 from datetime import datetime
-# import base64 # No longer needed for plot encoding
-# import urllib.request # No longer needed for OSM background
+import base64 # No longer needed for plot encoding
+import urllib.request # No longer needed for OSM background
 from math import log, tan, pi, cos, sinh, atan
 import uuid # For unique filenames
 import tempfile # <-- ADD IMPORT
 
 # Set the style for visualizations
-# plt.style.use('seaborn-v0_8-darkgrid') # Keep for other plots
-# sns.set_palette('viridis') # Keep for other plots
+plt.style.use('seaborn-v0_8-darkgrid') # Keep for other plots
+sns.set_palette('viridis') # Keep for other plots
 
 logger = logging.getLogger('data_processor')
 
@@ -788,19 +788,20 @@ class DataProcessor:
             # Handle any codes not in the map (though get_unique_descent_codes should have description)
             summary_data['Descent'] = summary_data['Descent'].fillna(summary_data['Descent Code'].apply(lambda x: f"Unknown ({x})"))
             
-            # 3. Create the plot
-            plt.figure(figsize=(12, 7)) # Adjusted figure size
+            # 3. Create the plot using object-oriented approach
+            fig, ax = plt.subplots(figsize=(12, 7))
             
             plot_title = 'Arrests by Descent'
             if len(sex_codes) == 1:
                  sex_name = "Male" if sex_codes[0] == 'M' else "Female" if sex_codes[0] == 'F' else sex_codes[0]
                  plot_title += f' ({sex_name})'
-                 # Plot single bars
-                 ax = sns.barplot(data=summary_data, x='Descent', y='Count', palette='viridis')
+                 # Plot single bars using the created axes object `ax`
+                 # Assign x to hue and hide legend to satisfy future seaborn requirements
+                 sns.barplot(data=summary_data, x='Descent', y='Count', hue='Descent', palette='viridis', ax=ax, legend=False)
             else: # Both sexes selected
                  plot_title += ' (Male vs Female)'
-                 # Plot grouped bars using hue
-                 ax = sns.barplot(data=summary_data, x='Descent', y='Count', hue='Sex Code', palette='coolwarm')
+                 # Plot grouped bars using hue and the created axes object `ax`
+                 sns.barplot(data=summary_data, x='Descent', y='Count', hue='Sex Code', palette='coolwarm', ax=ax)
                  ax.legend(title='Sex Code')
                  
             # Add charge group to title if specified
@@ -810,30 +811,28 @@ class DataProcessor:
             ax.set_title(plot_title)
             ax.set_xlabel('Descent')
             ax.set_ylabel('Number of Arrests')
-            plt.xticks(rotation=45, ha='right') # Rotate labels for better readability
+            # Use ax.tick_params for label rotation
+            ax.tick_params(axis='x', rotation=45, labelsize='medium') 
+            # Set horizontal alignment manually if needed after rotation
+            plt.setp(ax.get_xticklabels(), ha="right", rotation_mode="anchor")
             ax.grid(True, axis='y', linestyle='--', alpha=0.7)
-            plt.tight_layout() 
+            fig.tight_layout() # Call tight_layout on the figure object
             
-            # --- End NEW Plotting Logic ---
+            # --- End Plotting Logic ---
 
-            # Save plot to buffer
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=150) # Increased DPI slightly
-            plt.close() # Close the figure
-            buf.seek(0)
-            plot_bytes = buf.read()
-            buf.close()
+            # # Get the figure object << No longer needed, we have `fig`
+            # fig = plt.gcf()
 
-            # Prepare return data (now includes summary data and plot)
+            # Prepare return data (return figure object, not bytes)
             data_for_table = summary_data.to_dict(orient='records')
-            headers_for_table = ['Descent', 'Sex Code', 'Count'] # Headers for optional table view
+            headers_for_table = ['Descent', 'Sex Code', 'Count']
 
             return {
                 'status': 'OK',
-                'data': data_for_table,        # Return summary data for potential table display
-                'headers': headers_for_table,  
-                'plot': plot_bytes,           # Raw bytes of the plot PNG
-                'title': plot_title           # Use the generated plot title
+                'data': data_for_table,
+                'headers': headers_for_table,
+                'plot': fig,                  # Return the figure object
+                'title': plot_title
              }
 
         except KeyError as ke:

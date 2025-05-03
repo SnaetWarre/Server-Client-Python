@@ -19,23 +19,11 @@ class Message:
     def __init__(self, msg_type, data=None):
         self.msg_type = msg_type
         self.data = data if data is not None else {}
-    
-    def to_json(self):
-        msg_dict = {
-            'msg_type': self.msg_type,
-            'data': self.data
-        }
-        return json.dumps(msg_dict)
-    
-    @classmethod
-    def from_json(cls, json_str):
-        msg_dict = json.loads(json_str)
-        return cls(msg_dict['msg_type'], msg_dict['data'])
 
 
 def send_message(sock, message):
     """
-    Send a message object through a socket
+    Send a message object through a socket using Pickle
     
     Parameters:
     - sock: socket object
@@ -45,11 +33,8 @@ def send_message(sock, message):
     - True if message sent successfully, False otherwise
     """
     try:
-        # Convert message to JSON
-        msg_json = message.to_json()
-        
-        # Convert JSON to bytes
-        msg_bytes = msg_json.encode('utf-8')
+        # Convert message object to bytes using pickle
+        msg_bytes = pickle.dumps(message, protocol=4) # Use a high protocol
         
         # Send message length first (4 bytes, network byte order)
         msg_len = len(msg_bytes)
@@ -72,7 +57,7 @@ def send_message(sock, message):
 
 def receive_message(sock):
     """
-    Receive a message object from a socket
+    Receive a message object from a socket using Pickle
     
     Parameters:
     - sock: socket object
@@ -139,9 +124,13 @@ def receive_message(sock):
 
         logger.debug(f"PROTOCOL.RECEIVE: Received {bytes_received} bytes for message body.")
 
-        msg_json = data.decode('utf-8')
+        # Deserialize bytes using pickle
+        message = pickle.loads(data)
+        
+        if not isinstance(message, Message):
+            logger.error(f"PROTOCOL.RECEIVE: Deserialized object is not a Message type ({type(message)}). Socket {fileno}")
+            raise TypeError("Received invalid object type from socket")
 
-        message = Message.from_json(msg_json)
         logger.debug(f"PROTOCOL.RECEIVE: Successfully received message type {message.msg_type} (socket fileno {fileno}).")
         return message
 
@@ -158,28 +147,43 @@ def receive_message(sock):
          raise # Re-raise
 
 
-def encode_dataframe(df):
-    """Encode DataFrame for transmission"""
-    # Use pickle protocol 4 for potentially better performance and compatibility
-    return base64.b64encode(pickle.dumps(df, protocol=4)).decode('utf-8')
-
-
-def decode_dataframe(encoded_df):
-    """Decode DataFrame after transmission"""
-    return pickle.loads(base64.b64decode(encoded_df.encode('utf-8')))
-
-
 def encode_figure(fig):
-    """Encode matplotlib figure for transmission"""
+    """Encode matplotlib figure for transmission using FigureCanvasAgg"""
     import io
-    import matplotlib.pyplot as plt
+    # Import the canvas specifically
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    # We don't need pyplot here anymore
+    # import matplotlib.pyplot as plt 
     
+    # Attach the figure to an Agg canvas
+    canvas = FigureCanvasAgg(fig)
     buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=100) # Added dpi for controlled size
-    buf.seek(0)
     
-    encoded = base64.b64encode(buf.read()).decode('utf-8')
-    plt.close(fig) # Ensure figure is closed to free memory
+    # Explicitly draw the canvas first
+    canvas.draw()
+    # Then save to buffer
+    canvas.print_png(buf)
+    # No need to seek(0) after print_png with BytesIO
+    
+    # --- DEBUG: Save raw bytes before encoding ---
+    try:
+        raw_bytes = buf.getvalue()
+        with open("/tmp/server_plot_bytes.png", "wb") as f:
+            f.write(raw_bytes)
+        logger.info(f"DEBUG: Saved raw plot bytes ({len(raw_bytes)} bytes) to /tmp/server_plot_bytes.png")
+    except Exception as save_err:
+        logger.error(f"DEBUG: Failed to save raw plot bytes: {save_err}")
+    # -------------------------------------------
+
+    encoded = base64.b64encode(buf.getvalue()).decode('utf-8')
+    
+    # Since we created the canvas, we don't necessarily need to close the original fig?
+    # Let's keep the close for now to ensure memory is freed, assuming fig might not be used elsewhere.
+    # Need to import plt only for closing, or find alternative way to close fig?
+    # Let's try closing via the canvas's figure attribute if possible, or maybe it's not needed.
+    # For now, remove the plt import and the close call.
+    # plt.close(fig) 
+    
     return encoded
 
 
@@ -188,8 +192,26 @@ def decode_figure(encoded_fig):
     import io
     from PIL import Image
     
-    decoded = base64.b64decode(encoded_fig.encode('utf-8'))
+    # Ensure input is bytes for b64decode
+    if isinstance(encoded_fig, str):
+        bytes_to_decode = encoded_fig.encode('utf-8')
+    elif isinstance(encoded_fig, bytes):
+        bytes_to_decode = encoded_fig
+    else:
+        # Handle unexpected type
+        raise TypeError(f"decode_figure expects str or bytes, got {type(encoded_fig)}")
+        
+    decoded = base64.b64decode(bytes_to_decode)
     
+    # --- DEBUG: Save raw bytes after decoding ---
+    try:
+        with open("/tmp/client_plot_bytes.png", "wb") as f:
+            f.write(decoded)
+        logger.info(f"DEBUG: Saved decoded plot bytes ({len(decoded)} bytes) to /tmp/client_plot_bytes.png")
+    except Exception as save_err:
+        logger.error(f"DEBUG: Failed to save decoded plot bytes: {save_err}")
+    # ------------------------------------------
+
     buf = io.BytesIO(decoded)
     
     # Open the image with PIL - GUI will handle displaying the PIL Image

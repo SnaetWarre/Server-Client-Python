@@ -31,7 +31,10 @@ from PySide6.QtWidgets import (
     QDateEdit, QDoubleSpinBox, QStackedWidget, QListWidget, QListWidgetItem
 )
 from PySide6.QtGui import QPixmap, QFont, QIcon, QPalette, QColor
-from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QSettings, QDate
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QSettings, QDate, QEvent
+
+# Import necessary for rendering Matplotlib figure in Qt
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 
 # --- Configure GUI logging to file ---
 TEMP_DIR_GUI = tempfile.gettempdir()
@@ -401,25 +404,43 @@ class QueryWidget(QWidget):
         self.plot_scroll_area.setAlignment(Qt.AlignCenter) # Center the widget if smaller
         self.plot_scroll_area.setStyleSheet("background-color: #1E1E1E;") # Match dark theme bg
 
-        # Placeholder for plot (inside scroll area)
-        self.plot_label = FigureLabel() 
-        self.plot_label.setAlignment(Qt.AlignCenter)
-        self.plot_label.setText("Graph will be displayed here for Query 3/4")
-        # self.plot_label.setMinimumHeight(200) # Remove minimum height, scroll area handles it
-        # self.plot_label.hide() # Scroll area will be hidden initially
+        # Use a FigureCanvasQTAgg widget to display the plot
+        # We need a placeholder figure initially
+        from matplotlib.figure import Figure
+        placeholder_fig = Figure(figsize=(5, 4), dpi=100)
+        self.plot_canvas = FigureCanvasQTAgg(placeholder_fig)
 
-        # Set the label as the widget for the scroll area
-        self.plot_scroll_area.setWidget(self.plot_label)
+        # Set the canvas as the widget for the scroll area
+        self.plot_scroll_area.setWidget(self.plot_canvas)
         self.plot_scroll_area.hide() # Hide scroll area initially
         # -----------------------------------------
 
-        # Add the scroll area to the splitter
+        # Add the scroll area (containing the canvas) to the splitter
         self.results_splitter.addWidget(self.plot_scroll_area)
         
         results_layout.addWidget(self.results_splitter)
         results_group.setLayout(results_layout)
         
         layout.addWidget(results_group, 1) 
+
+        # Store the current figure for the viewer dialog
+        self.current_figure = None
+        # Install event filter on the canvas itself for clicks
+        self.plot_canvas.installEventFilter(self)
+
+    def eventFilter(self, source, event):
+        """Handle events, specifically clicks on the plot canvas."""
+        # Check if the source is the plot canvas
+        if source == self.plot_canvas and event.type() == QEvent.MouseButtonPress:
+            if event.button() == Qt.LeftButton and self.current_figure:
+                # Emit signal with the stored figure object
+                self.plot_clicked.emit(self.current_figure)
+                return True # Event handled
+        # Pass event along if not handled
+        return False
+
+    # Add signal for plot clicks
+    plot_clicked = Signal(object) # Emits the matplotlib Figure object
 
     def _create_query1_params(self):
         """Create parameter widget for Query 1"""
@@ -598,43 +619,66 @@ class QueryWidget(QWidget):
         self.results_table.resizeColumnsToContents()
         logger.info(f"Displayed {len(data)} results.")
 
-    def display_plot(self, image_bytes, title="Query Result Plot"):
-        """Display a plot image"""
+    def display_plot(self, fig, title="Query Result Plot"):
+        """Display a matplotlib figure using FigureCanvasQTAgg"""
+        if fig is None:
+            logger.warning("display_plot called with None figure.")
+            self.display_error_in_plot_area("Received empty plot data.")
+            return
+            
         try:
-            pixmap = QPixmap()
-            if pixmap.loadFromData(image_bytes):
-                self.results_table.hide()
-                # Reset the plot label size to the pixmap size
-                self.plot_label.setFixedSize(pixmap.size())
-                self.plot_label.setPixmap(pixmap)
-                self.plot_label.setScaledContents(False) # <<< IMPORTANT: Disable scaling
+            # Store the figure for potential click events
+            self.current_figure = fig
+            
+            # Create a NEW canvas with the received figure
+            self.plot_canvas = FigureCanvasQTAgg(fig)
+            
+            # --- Prevent blurry scaling --- 
+            # Calculate native size based on figure DPI
+            dpi = fig.get_dpi()
+            width_inches = fig.get_figwidth()
+            height_inches = fig.get_figheight()
+            width_pixels = int(width_inches * dpi)
+            height_pixels = int(height_inches * dpi)
+            # Set the canvas to its native pixel size
+            self.plot_canvas.setFixedSize(width_pixels, height_pixels)
+            # --------------------------- 
+            
+            # Set the new canvas as the widget for the scroll area
+            self.plot_scroll_area.setWidget(self.plot_canvas)
 
-                # Adjust splitter sizes (optional, maybe keep previous split?)
-                plot_height = self.results_splitter.height() # Give plot all space
-                table_height = 0
-                self.results_splitter.setSizes([table_height, plot_height])
-                
-                # self.plot_label.setMinimumSize(self.results_splitter.width(), plot_height) # Remove this
-                
-                self.plot_label.original_pixmap = pixmap
-                self.plot_label.setTitle(title)
-                self.plot_scroll_area.show() # Show scroll area
-                logger.info("Plot displayed successfully in scroll area.")
-            else:
-                logger.error("Failed to load image data into QPixmap.")
-                self.display_error_in_plot_area("Failed to load plot image.")
+            self.results_table.hide()
+            self.plot_scroll_area.show()
+            
+            # No need to resize splitter here, let scroll area handle it
+            # plot_height = self.results_splitter.height()
+            # table_height = 0
+            # self.results_splitter.setSizes([table_height, plot_height])
+
+            logger.info(f"Matplotlib Figure displayed (native size: {width_pixels}x{height_pixels}) using FigureCanvasQTAgg.")
+            
+            # TODO: Add title display? (Canvas doesn't have setTitle like QLabel)
+            # Maybe add a separate QLabel above the scroll area for the title.
+            
+            # TODO: Implement click-to-enlarge for canvas?
+            # This would require custom event handling on the canvas widget.
+
         except Exception as e:
-            logger.error(f"Error displaying plot: {e}")
+            logger.error(f"Error displaying plot with FigureCanvasQTAgg: {e}", exc_info=True)
             self.display_error_in_plot_area(f"Error displaying plot: {e}")
             
     def display_error_in_plot_area(self, message):
-        """Displays an error message in the plot label area"""
-        original_sizes = self.results_splitter.sizes()
-        table_height = int(self.results_splitter.height() * 0.7) if sum(original_sizes) == 0 else original_sizes[0]
-        plot_height = self.results_splitter.height() - table_height
-        self.results_splitter.setSizes([table_height, plot_height])
-        self.plot_label.setText(message)
-        self.plot_label.setPixmap(QPixmap()) 
+        """Displays an error message in the plot canvas area"""
+        from matplotlib.figure import Figure # Import Figure locally for error display
+        # Create a simple figure with error text
+        error_fig = Figure()
+        ax = error_fig.add_subplot(111)
+        ax.text(0.5, 0.5, message, ha='center', va='center', color='red', wrap=True)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        # Create a new canvas for the error message
+        self.plot_canvas = FigureCanvasQTAgg(error_fig)
+        self.plot_scroll_area.setWidget(self.plot_canvas)
         self.plot_scroll_area.show() # Show scroll area with error message
         self.results_table.hide()
 
@@ -647,9 +691,15 @@ class QueryWidget(QWidget):
         # ----------------------------------------
         self.results_table.setRowCount(0)
         self.results_table.setColumnCount(0)
-        self.plot_label.clear()
+        # Clear the plot by setting a blank figure
+        from matplotlib.figure import Figure
+        blank_fig = Figure()
+        self.plot_canvas = FigureCanvasQTAgg(blank_fig)
+        self.plot_scroll_area.setWidget(self.plot_canvas)
         self.plot_scroll_area.hide() # Hide scroll area
         self.results_table.show()
+        # Clear the stored figure reference
+        self.current_figure = None 
         logger.info("Query results cleared.")
 
 
@@ -703,76 +753,61 @@ class MessageWidget(QWidget):
 
 
 class PlotViewerDialog(QDialog):
-    """Dialog for viewing plots in a larger size"""
+    """Dialog for viewing Matplotlib figures in a larger size with save option."""
     
-    def __init__(self, pixmap, title, parent=None):
+    def __init__(self, fig, title="Plot Viewer", parent=None):
         super().__init__(parent)
+        self.figure = fig # Store the figure object
         self.setWindowTitle(title)
         self.setModal(True)
         
-        # Set a large initial size (80% of screen size)
+        # Set a large initial size (e.g., 80% of screen)
         screen_size = QApplication.primaryScreen().size()
         self.resize(int(screen_size.width() * 0.8), int(screen_size.height() * 0.8))
         
-        # Create layout
+        # Main layout
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)  # Reduce margins
-        layout.setSpacing(5)  # Reduce spacing
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
         
-        # Create scroll area for the plot
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
+        # Create FigureCanvas
+        self.plot_canvas = FigureCanvasQTAgg(self.figure)
         
-        # Create label for the plot
-        self.plot_label = QLabel()
-        self.plot_label.setAlignment(Qt.AlignCenter)
-        self.plot_label.setPixmap(pixmap)
-        self.plot_label.setScaledContents(False)  # Don't scale automatically
-        
-        # Add label to scroll area
-        scroll_area.setWidget(self.plot_label)
-        
-        # Add scroll area to layout
-        layout.addWidget(scroll_area, 1)
+        # Add canvas to layout (allow stretching)
+        layout.addWidget(self.plot_canvas, 1)
         
         # Create buttons
         button_layout = QHBoxLayout()
-        button_layout.setSpacing(5)  # Reduce spacing
+        button_layout.addStretch()
         
-        # Save button
-        self.save_button = QPushButton("Save Image")
-        self.save_button.setIcon(QIcon.fromTheme("document-save"))  # Add icon if available
+        self.save_button = QPushButton(QIcon.fromTheme("document-save"), "Save Image")
         self.save_button.clicked.connect(self.save_image)
         button_layout.addWidget(self.save_button)
         
-        # Add spacer to push close button to the right
-        button_layout.addStretch()
-        
-        # Close button
-        self.close_button = QPushButton("Close")
-        self.close_button.setIcon(QIcon.fromTheme("window-close"))  # Add icon if available
+        self.close_button = QPushButton(QIcon.fromTheme("window-close"), "Close")
         self.close_button.clicked.connect(self.accept)
         button_layout.addWidget(self.close_button)
         
-        # Add buttons to layout
         layout.addLayout(button_layout)
-        
-        # Store the pixmap for saving
-        self.pixmap = pixmap
     
     def save_image(self):
-        """Save the plot image to a file"""
-        filename, _ = QFileDialog.getSaveFileName(
-            self, "Save Image", "", "Images (*.png *.jpg *.jpeg)"
+        """Save the plot image to a file using the figure's savefig."""
+        filename, selected_filter = QFileDialog.getSaveFileName(
+            self, 
+            "Save Plot Image", 
+            "", # Default directory
+            "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;PDF Document (*.pdf);;All Files (*)"
         )
         if filename:
-            if not filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-                filename += '.png'
-            self.pixmap.save(filename)
-            
-            # Show confirmation in status bar if we can access parent's status bar
-            if hasattr(self.parent(), 'status_bar'):
-                self.parent().status_bar.showMessage(f"Image saved to {filename}", 3000)
+            try:
+                # Use the stored figure object's savefig method
+                self.figure.savefig(filename) # Let savefig determine format from extension
+                # Show confirmation in main window status bar if possible
+                if hasattr(self.parent(), 'status_bar'):
+                    self.parent().status_bar.showMessage(f"Image saved to {filename}", 3000)
+            except Exception as e:
+                QMessageBox.critical(self, "Save Error", f"Could not save image:\n{e}")
+                logger.error(f"Error saving plot from dialog: {e}", exc_info=True)
 
 
 class FigureLabel(QLabel):
@@ -953,9 +988,8 @@ class ClientGUI(QMainWindow):
         
         # Query
         self.query_tab.send_query_button.clicked.connect(self.send_query)
-        # Connect plot label click (Assuming FigureLabel is used in QueryWidget)
-        if hasattr(self.query_tab, 'plot_label') and isinstance(self.query_tab.plot_label, FigureLabel):
-             self.query_tab.plot_label.clicked.connect(self.on_figure_clicked)
+        # Connect the new plot_clicked signal from QueryWidget
+        self.query_tab.plot_clicked.connect(self.on_plot_clicked)
         self.callbacks_bridge.query_result_received.connect(self.on_query_result)
         
         # Messages
@@ -1112,103 +1146,60 @@ class ClientGUI(QMainWindow):
         """Handle results received from the server"""
         logger.info(f"Received query result: {type(result)}")
 
-        # --- VERY IMPORTANT: Log the received dictionary keys ---
-        if isinstance(result, dict):
-            logger.info(f"ON_QUERY_RESULT: Received dictionary keys: {list(result.keys())}")
-        else:
-            logger.warning("ON_QUERY_RESULT: Received result is not a dictionary.")
-            self.statusBar().showMessage("Received unexpected result format from server.", 5000)
-            self.query_tab.display_results({'data': [], 'headers': ['Error']})
-            return # Exit early if not a dict
-        # --------------------------------------------------------
-
-        # Now we know result is a dict
-        query_type = result.get('query_type', 'unknown')
+        # Check if the result is for metadata
         metadata_type = result.get('metadata_type')
+        if metadata_type:
+            self.handle_metadata_result(metadata_type, result.get('data'))
+            return # Stop further processing
 
-        # --- Explicit check for map_filepath EXISTENCE and log entry ---
-        if 'map_filepath' in result and result['map_filepath'] is not None:
-            map_filepath = result['map_filepath']
-            logger.info(f"ON_QUERY_RESULT: 'map_filepath' key FOUND. Entering map handling block.")
-            try:
-                # --- Handle Local HTML Map File --- 
-                real_path = map_filepath 
-                if not os.path.exists(real_path):
-                    logger.error(f"Map file path received from server does not exist: {real_path}")
-                    QMessageBox.critical(self, "Map Error", f"Received map path does not exist:\n{real_path}")
-                    self.query_tab.display_results(result) # Display table data as fallback
-                    return
-                    
-                # Construct file URI using pathlib
-                file_uri = None # Initialize
+        # Check if the result is a map (Query 4)
+        map_filepath = result.get('map_filepath')
+        if map_filepath:
+            self.query_tab.clear_results() # Clear table/plot
+            # Ensure path is absolute and exists
+            if os.path.isabs(map_filepath) and os.path.exists(map_filepath):
+                 map_url = Path(map_filepath).as_uri()
+                 logger.info(f"Opening map: {map_url}")
+                 QMessageBox.information(self, "Map Generated", 
+                                         f"Map saved to:\n{map_filepath}\n\nOpening in web browser...")
+                 webbrowser.open(map_url)
+            else:
+                 logger.error(f"Received invalid map filepath: {map_filepath}")
+                 self.on_error(f"Server returned an invalid map file path.")
+            return # Stop further processing
+            
+        # Check if the result contains a plot Figure object
+        fig_plot = result.get('plot')
+        if fig_plot:
+            # Check if it's actually a Figure object (Pickle should preserve type)
+            from matplotlib.figure import Figure
+            if isinstance(fig_plot, Figure):
                 try:
-                    file_uri = Path(real_path).as_uri()
-                    logger.info(f"Constructed file URI: {file_uri}") # Add log here
-                except Exception as path_err:
-                    logger.error(f"Error converting path to URI: {real_path} - {path_err}", exc_info=True)
-                    QMessageBox.critical(self, "Map Error", f"Could not create URI for map path: {real_path} - Error: {path_err}")  
-                    self.query_tab.display_results(result) # Fallback
-                    return
-
-                logger.info(f"Attempting to open local map file at URI: {file_uri}") 
-                
-                # --- Open the local file in the default web browser ---
-                browser_opened = False
-                if file_uri: # Only attempt if URI construction succeeded
-                    try:
-                        browser_opened = webbrowser.open(file_uri) # Store the return value
-                        if browser_opened:
-                                logger.info("webbrowser.open() call successful (returned True).")
-                                self.statusBar().showMessage("Opening interactive map in browser...", 3000)
-                        else:
-                                logger.warning("webbrowser.open() returned False. Browser might not have opened automatically.")
-                                QMessageBox.warning(self, "Map Info", f"Attempted to open map, but the browser might not have launched automatically.\n\nPlease try opening the file manually:\n{real_path}")
-                                self.statusBar().showMessage("Map generated, but browser may not open automatically. Check file path.", 5000)
-                    except webbrowser.Error as wb_err:
-                            logger.error(f"webbrowser.Error opening map URI {file_uri}: {wb_err}", exc_info=True)
-                            QMessageBox.critical(self, "Map Error", f"Could not open interactive map due to a browser error: {wb_err}\n\nFile saved at:\n{real_path}")
-                            self.statusBar().showMessage("Error opening map (webbrowser error).", 5000)
-                    except Exception as open_err: # Catch any other unexpected error during open
-                            logger.error(f"Unexpected error opening map URI {file_uri}: {open_err}", exc_info=True)
-                            QMessageBox.critical(self, "Map Error", f"An unexpected error occurred trying to open the map: {open_err}\n\nFile saved at:\n{real_path}")
-                            self.statusBar().showMessage("Unexpected error opening map.", 5000)
-
-                # --- Fallback/UI update logic ---
-                # Display table data always for context
-                logger.info("Displaying table data alongside attempting map open.")
-                self.query_tab.display_results(result) # Display table results regardless
-                self.query_tab.plot_scroll_area.hide() # Ensure plot area is hidden
-                self.query_tab.results_table.show() 
-                # --------------------------------
-
-            except Exception as e: # Catch errors within the map handling block
-                logger.error(f"Error handling map filepath processing: {e}", exc_info=True)
-                QMessageBox.critical(self, "Map Error", f"Could not process map filepath: {e}")
-                self.statusBar().showMessage("Error handling map path.", 5000)
-                self.query_tab.display_results(result) # Fallback to showing table data on error
-
-        # --- Continue with other checks AFTER map check ---
-        elif metadata_type:
-            self.handle_metadata_result(metadata_type, result.get('data', []))
-        
-        elif 'error' in result:
-            logger.error(f"Query Error from server or client processing: {result['error']}")
-            self.status_bar.showMessage(f"Query Error: {result['error']}", 5000)
-            self.query_tab.display_results({'data': [[result['error']]], 'headers': ['Error']})
-        
-        else:
-            # Handle regular tabular data (if no map path, no metadata, no error)
-            logger.info("ON_QUERY_RESULT: No map_filepath found, processing as regular data.")
+                    # No need to decode, pass the Figure object directly
+                    plot_title = result.get('title', 'Query Plot')
+                    self.query_tab.display_plot(fig_plot, plot_title)
+                    logger.info("Query plot Figure object received and sent to display.")
+                except Exception as e:
+                    logger.error(f"Error displaying plot Figure: {e}", exc_info=True)
+                    self.on_error(f"Client error displaying plot: {e}")
+                # Return because we only want to show the plot
+                return 
+            else:
+                logger.error(f"Received 'plot' data is not a Matplotlib Figure. Type: {type(fig_plot)}")
+                self.on_error("Client error: Received invalid plot data type from server.")
+                # Fall through to potentially display table data if available?
+                # Or return here as well if plot was expected but invalid?
+                # Let's fall through for now.
+            
+        # Check if the result contains data for the table (and no plot was handled)
+        if 'data' in result:
+            # This block is now only reached if fig_plot was None/False
             self.query_tab.display_results(result)
-
-            record_count = 0
-            if result.get('data') is not None:
-                try:
-                    record_count = len(result['data'])
-                except TypeError:
-                    logger.warning("Could not get length of received data.")
-                    record_count = 'N/A'
-            self.status_bar.showMessage(f"Query successful. Displayed {record_count} records.", 3000)
+            logger.info("Query data result received and sent to display.")
+        else:
+            # Handle case where neither plot nor data is present 
+            logger.warning("Query result received with OK status but no data or plot.")
+            self.query_tab.display_results(result) # Will show 'No results'
 
     def handle_metadata_result(self, metadata_type, data):
         """Update combo boxes or date edits with metadata received from server"""
@@ -1576,12 +1567,29 @@ class ClientGUI(QMainWindow):
             QMessageBox.critical(self, "Query Error", f"An error occurred: {e}")
             self.statusBar().showMessage(f"Query Error: {e}", 5000)
     
-    def on_figure_clicked(self, pixmap, title):
-        """Handle a figure being clicked"""
-        # Show the plot viewer dialog
-        dialog = PlotViewerDialog(pixmap, title, self)
-        dialog.exec_()
-    
+    # SLot to handle plot clicks from QueryWidget
+    @Slot(object) # Type hint for the Figure object
+    def on_plot_clicked(self, fig):
+        """Handle the plot_clicked signal from QueryWidget."""
+        if fig is None:
+            logger.warning("on_plot_clicked received None figure.")
+            return
+        
+        # Get title from figure if possible, or use default
+        # Matplotlib Figure objects don't have a simple .title attribute
+        # We might need to get it from the axes, or pass it separately.
+        # For now, use a generic title.
+        # TODO: Find a way to get/pass the plot title for the dialog.
+        dialog_title = "Plot Viewer"
+        
+        # Create and show the plot viewer dialog
+        try:
+            dialog = PlotViewerDialog(fig, dialog_title, self) # Pass self as parent
+            dialog.exec() # Use exec() for modal dialog
+        except Exception as e:
+            logger.error(f"Error creating or showing PlotViewerDialog: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"Could not open plot viewer: {e}")
+
     def closeEvent(self, event):
         """Called when window is closed"""
         # 1) Disconnect socket and stop the receive-loop

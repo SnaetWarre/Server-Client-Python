@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 # Import shared modules
 from shared.constants import *
-from shared.protocol import Message, send_message, receive_message, encode_dataframe, encode_figure
+from shared.protocol import Message, send_message, receive_message
 
 # Import server modules
 from .database import Database
@@ -379,12 +379,8 @@ class ClientHandler(threading.Thread):
 
             # Add data/headers ONLY if they exist in the processor result
             if 'data' in result and result['data'] is not None:
-                 try:
-                      response_data['data'] = encode_dataframe(result['data'])
-                 except Exception as enc_err:
-                      logger.error(f"Failed to encode dataframe for query {query_type_id}: {enc_err}", exc_info=True)
-                      self.send_error(f"Server error: Failed to prepare query results.")
-                      return
+                 # Pickle handles the data directly, no encoding needed
+                 response_data['data'] = result['data']
             if 'headers' in result:
                  response_data['headers'] = result['headers']
 
@@ -396,10 +392,10 @@ class ClientHandler(threading.Thread):
                  response_data.pop('metadata_type', None)
             # Add plot ONLY if it exists (e.g., for Query 3) AND map_filepath is NOT present
             elif 'plot' in result and result['plot'] is not None:
-                 response_data['plot'] = encode_figure(result['plot']) # Assume encode_figure handles bytes
+                 # Send the raw figure object directly - Pickle will handle it
+                 response_data['plot'] = result['plot'] # <<< Keep the fig object
                  # Ensure no conflicting keys are present
                  response_data.pop('map_filepath', None)
-                 response_data.pop('metadata_type', None)
 
             # --- Log the response data being sent --- 
             logger.info(f"HANDLE_QUERY: Sending response_data to client. Map path included: {response_data.get('map_filepath') is not None}")
@@ -590,7 +586,7 @@ class Server:
         self.clients = []  # List of active client handlers
         self.clients_lock = threading.Lock() # ADDED Lock for clients list
         self.db = Database()
-        self.data_processor = DataProcessor()
+        self.data_processor = DataProcessor() # Path to the processed data
         
         # Activity log for the server (for the GUI)
         self.activity_log = []

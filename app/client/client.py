@@ -19,7 +19,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 # Import shared modules
 from shared.constants import *
-from shared.protocol import Message, send_message, receive_message, decode_dataframe, decode_figure
+from shared.protocol import Message, send_message, receive_message
+
+# Import database module
 
 # --- Configure logging to file ---
 TEMP_DIR = tempfile.gettempdir()
