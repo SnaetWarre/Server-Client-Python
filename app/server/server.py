@@ -162,6 +162,7 @@ class Server:
             
         logger.info("Server stopped")
         self.log_activity("Server stopped")
+        return True # Indicate successful stop
     
     def accept_clients(self):
         """Accept incoming client connections"""
