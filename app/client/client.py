@@ -11,7 +11,6 @@ import logging
 from datetime import datetime
 import struct
 import json
-import base64
 import tempfile
 import uuid
 

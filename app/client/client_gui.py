@@ -3,7 +3,6 @@
 
 import os
 import sys
-import time
 import logging
 from datetime import datetime
 import re 
@@ -30,7 +29,7 @@ from PySide6.QtWidgets import (
     QDateEdit, QDoubleSpinBox, QStackedWidget, QListWidget, QListWidgetItem
 )
 from PySide6.QtGui import QPixmap, QFont, QIcon, QPalette, QColor
-from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QSettings, QDate, QEvent
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QSettings, QDate
 
 # Import necessary for rendering Matplotlib figure in Qt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg

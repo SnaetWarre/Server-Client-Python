@@ -6,22 +6,17 @@ import sys
 import socket
 import threading
 import logging
-import json
 import time
-import queue
 from datetime import datetime
-import sqlite3
-import base64
-import re # Import re module
-import tempfile # <-- Add tempfile import
-import uuid # Import uuid module
+import tempfile 
+
 
 # Add the parent directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import shared modules
 from shared.constants import *
-from shared.protocol import Message, send_message, receive_message
+from shared.protocol import Message
 
 # Import server modules
 from .database import Database
