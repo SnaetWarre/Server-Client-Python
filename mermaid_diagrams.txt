@@ -1,0 +1,112 @@
+\
+## Diagram 1: Algemene Werking (Overall Working)
+
+```mermaid
+graph LR
+    A[Server_Gui klasse]
+    B[Clienthandler klasse]
+    C[Client_Gui klasse]
+
+    subgraph desc_A [ ]
+        direction LR
+        A_text("houdt alle<br/>clienthandlers bij<br/>om zo berichten<br/>naar clients te<br/>sturen") ~~~ A
+    end
+
+    subgraph desc_C [ ]
+        direction RL
+        C ~~~ C_text("gebruikt threading<br/>om alle inkomende<br/>data te organiseren")
+    end
+
+    A -- "maakt clienthandler<br/>aan per client" --> B
+    B -- "stuurt requests van<br/>clients door naar server<br/>via message queue" --> A
+    B -- "verbonden via socket;<br/>communiceert met strings<br/>(en images voor grafieken)" --> C
+    C --> B
+
+    style desc_A fill:#fff,stroke:#fff,color:#fff
+    style desc_C fill:#fff,stroke:#fff,color:#fff
+```
+
+---
+
+## Diagram 2: Communicatie Flow
+
+```mermaid
+sequenceDiagram
+    participant Client_Gui
+    participant Clienthandler
+    participant Server_Gui
+    participant Server_Core_Logic
+
+    Client_Gui->>Clienthandler: Gebruikersinteractie (bv. query-knop klik)
+    Clienthandler->>Server_Gui: Stuurt request via Message Queue (bv. query parameters)
+    Server_Gui->>Server_Core_Logic: Verwerkt request (bv. database query)
+    Server_Core_Logic-->>Server_Gui: Resultaat (bv. data/plot info)
+    Server_Gui->>Clienthandler: Stuurt antwoord/data naar specifieke clienthandler
+
+    alt Socket Communicatie (Data/Strings)
+        Clienthandler->>Client_Gui: Verbonden via Socket:<br/>Verstuurt data (strings)
+        Client_Gui-->>Clienthandler: (Optioneel: bevestiging/vervolg)
+    else Socket Communicatie (Grafieken/Images)
+        Clienthandler->>Client_Gui: Verbonden via Socket:<br/>Verstuurt grafiek (image data)
+        Client_Gui-->>Clienthandler: (Optioneel: bevestiging/vervolg)
+    end
+
+    Note right of Server_Gui: Houdt lijst van actieve Clienthandlers bij
+    Note left of Client_Gui: Ontvangt data/images,<br/>toont in GUI
+```
+
+---
+
+## Diagram 3: Threading Model (Conceptueel)
+
+```mermaid
+graph TD
+    %% Client Side
+    subgraph Client Application
+        direction TB
+        Client_MainThread["Client_Gui Hoofdthread<br/>(PySide6 UI Events, Signalen, GUI Updates)"]
+        Client_ReceiverThread["Client.receiver_thread<br/>(Dedicated Thread per Client instantie)<br/>socket.recv() in loop, verwerkt berichten"]
+        
+        Client_MainThread -- Start/Stop --> Client_ReceiverThread
+        Client_ReceiverThread -- on_..._status_change() signalen --> Client_CallbacksBridge
+        Client_ReceiverThread -- on_message_received() signaal --> Client_CallbacksBridge
+        Client_ReceiverThread -- on_query_result() signaal --> Client_CallbacksBridge
+        Client_ReceiverThread -- on_error() signaal --> Client_CallbacksBridge
+        Client_CallbacksBridge -- Qt Signalen --> Client_MainThread["Slots in ClientGUI"]
+    end
+
+    %% Server Side
+    subgraph Server Application
+        direction TB
+        Server_MainThread["Server Hoofdthread<br/>(server.py - socket.accept() loop in accept_clients)"]
+        Server_ClientHandlerThread["ClientHandler Thread<br/>(1 per verbonden client)<br/>socket.recv() in loop, verwerkt client berichten"]
+        
+        Server_MainThread -- Creëert per client --> Server_ClientHandlerThread
+        Server_ClientHandlerThread -- Leest van --> ClientSocket["Client Socket"]
+        Server_ClientHandlerThread -- Schrijft naar --> ClientSocket
+        Server_ClientHandlerThread -- Database operaties --> DatabasePool["SQLite Connection Pool<br/>(in Database.py)"]
+        Server_ClientHandlerThread -- Gebruikt --> DataProcessor["DataProcessor Instantie"]
+        
+        %% Server-side message queue for sending to client
+        Server_Gui_Component["Server_Gui (Optioneel)<br/>(Indien server een GUI heeft)"] -- Kan berichten sturen via --> Server_ClientHandlerThread
+        Server_ClientHandlerThread -- Interne Queue --> ClientSocket["(client.message_queue in ClientHandler)"]
+
+    end
+
+    %% Network Layer
+    Client_ReceiverThread -- Netwerk Communicatie --> ClientSocket
+    Network["Netwerk<br/>(TCP/IP Sockets)"]
+    ClientSocket --- Network --- ServerSocket["Server Luister Socket"]
+    ServerSocket --- Server_MainThread
+
+    %% Stijlen
+    classDef mainThread fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef workerThread fill:#9cf,stroke:#333,stroke-width:2px;
+    classDef component fill:#9f9,stroke:#333,stroke-width:1px;
+    classDef network fill:#fef,stroke:#333,stroke-width:1px;
+
+    class Client_MainThread,Server_MainThread mainThread;
+    class Client_ReceiverThread,Server_ClientHandlerThread workerThread;
+    class Client_CallbacksBridge,DatabasePool,DataProcessor,ClientSocket,ServerSocket,Server_Gui_Component component;
+    class Network network;
+``` 
