@@ -228,9 +228,9 @@ class QueryWidget(QWidget):
         self.q1_end_date = QDateEdit(datetime.now().date())
         self.q1_min_age_spin = QSpinBox()
         self.q1_max_age_spin = QSpinBox()
-        self.q1_min_age_spin.setRange(0, 120)
-        self.q1_max_age_spin.setRange(0, 120)
-        self.q1_max_age_spin.setValue(120)
+        self.q1_min_age_spin.setRange(0, 90)
+        self.q1_max_age_spin.setRange(0, 900)
+        self.q1_max_age_spin.setValue(90)
 
         layout.addRow("Gebied (Area Name):", self.q1_area_combo)
         layout.addRow("Startdatum:", self.q1_start_date)
