@@ -21,6 +21,7 @@ import urllib.request # No longer needed for OSM background
 from math import log, tan, pi, cos, sinh, atan
 import uuid # For unique filenames
 import tempfile # <-- ADD IMPORT
+import json # <-- ADD IMPORT FOR GEOJSON PARSING
 
 # Set the style for visualizations
 plt.style.use('seaborn-v0_8-darkgrid') # Keep for other plots
@@ -52,12 +53,33 @@ class DataProcessor:
                     try:
                         self.df[col] = pd.to_datetime(self.df[col], errors='coerce')
                     except:
-                        pass
+                        pass # Keep original if conversion fails
             
             # Ensure 'Arrest Date' is datetime
-            self.df['Arrest Date'] = pd.to_datetime(self.df['Arrest Date'], errors='coerce')
-            # Drop rows where Arrest Date couldn't be parsed if necessary
-            self.df.dropna(subset=['Arrest Date'], inplace=True)
+            if 'Arrest Date' in self.df.columns:
+                self.df['Arrest Date'] = pd.to_datetime(self.df['Arrest Date'], errors='coerce')
+                # Drop rows where Arrest Date couldn't be parsed if necessary
+                self.df.dropna(subset=['Arrest Date'], inplace=True)
+
+            # --- Try to parse Location_GeoJSON if it exists ---
+            if 'Location_GeoJSON' in self.df.columns and self.df['Location_GeoJSON'].dtype == 'object':
+                logger.info("Attempting to parse 'Location_GeoJSON' column...")
+                def parse_geojson_str(geojson_str):
+                    if pd.isna(geojson_str) or not isinstance(geojson_str, str):
+                        return None
+                    try:
+                        # Replace single quotes with double quotes for valid JSON
+                        valid_json_str = geojson_str.replace("'", "\"")
+                        return json.loads(valid_json_str)
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Could not parse GeoJSON string: {geojson_str[:100]}... Error: {e}")
+                        return None
+                
+                self.df['Location_GeoJSON_Parsed'] = self.df['Location_GeoJSON'].apply(parse_geojson_str)
+                parsed_count = self.df['Location_GeoJSON_Parsed'].notna().sum()
+                total_geojson_entries = len(self.df[self.df['Location_GeoJSON'].notna()])
+                logger.info(f"Parsed {parsed_count} out of {total_geojson_entries} non-null entries in 'Location_GeoJSON'.")
+            # --- End GeoJSON parsing ---
             
             return True
         except Exception as e:
@@ -871,22 +893,44 @@ class DataProcessor:
             arrest_type_code = params.get('arrest_type_code')
 
             # --- Filter Data --- 
+            df_working = self.df.copy() # Work with a copy
+
+            # --- Extract LAT/LON, prioritizing parsed GeoJSON ---
+            has_geojson_col = 'Location_GeoJSON_Parsed' in df_working.columns
+
+            if has_geojson_col:
+                logger.info("Query 4: Using 'Location_GeoJSON_Parsed' for coordinates.")
+                df_working['extracted_LON'] = df_working['Location_GeoJSON_Parsed'].apply(
+                    lambda x: x['geometry']['coordinates'][0] if isinstance(x, dict) and x.get('geometry') and x['geometry'].get('type') == 'Point' and len(x['geometry']['coordinates']) == 2 else None
+                )
+                df_working['extracted_LAT'] = df_working['Location_GeoJSON_Parsed'].apply(
+                    lambda x: x['geometry']['coordinates'][1] if isinstance(x, dict) and x.get('geometry') and x['geometry'].get('type') == 'Point' and len(x['geometry']['coordinates']) == 2 else None
+                )
+            elif 'LON' in df_working.columns and 'LAT' in df_working.columns:
+                logger.info("Query 4: Using existing 'LON' and 'LAT' columns.")
+                df_working['extracted_LON'] = df_working['LON']
+                df_working['extracted_LAT'] = df_working['LAT']
+            else:
+                logger.error("Query 4: Coordinate columns ('Location_GeoJSON_Parsed' or 'LON'/'LAT') not found.")
+                return {'status': 'error', 'message': 'Coordinate data is missing or could not be processed.'}
+
+            df_working['extracted_LAT'] = pd.to_numeric(df_working['extracted_LAT'], errors='coerce')
+            df_working['extracted_LON'] = pd.to_numeric(df_working['extracted_LON'], errors='coerce')
+            # --- End Coordinate Extraction ---
+
+
             # (Keep the efficient bounding box + precise radius filter)
             lat_degrees_delta = radius_km / 111.0
             lon_degrees_delta = radius_km / (111.0 * np.cos(np.radians(center_lat)))
             min_lat, max_lat = center_lat - lat_degrees_delta, center_lat + lat_degrees_delta
             min_lon, max_lon = center_lon - lon_degrees_delta, center_lon + lon_degrees_delta
 
-            df_numeric = self.df.copy()
-            df_numeric['LAT'] = pd.to_numeric(df_numeric['LAT'], errors='coerce')
-            df_numeric['LON'] = pd.to_numeric(df_numeric['LON'], errors='coerce')
-
-            df_filtered = df_numeric[
-                (df_numeric['Arrest Date'] >= start_date) &
-                (df_numeric['Arrest Date'] <= end_date) &
-                df_numeric['LAT'].notna() & df_numeric['LON'].notna() &
-                (df_numeric['LAT'] >= min_lat) & (df_numeric['LAT'] <= max_lat) &
-                (df_numeric['LON'] >= min_lon) & (df_numeric['LON'] <= max_lon)
+            df_filtered = df_working[
+                (df_working['Arrest Date'] >= start_date) &
+                (df_working['Arrest Date'] <= end_date) &
+                df_working['extracted_LAT'].notna() & df_working['extracted_LON'].notna() &
+                (df_working['extracted_LAT'] >= min_lat) & (df_working['extracted_LAT'] <= max_lat) &
+                (df_working['extracted_LON'] >= min_lon) & (df_working['extracted_LON'] <= max_lon)
             ]
 
             if arrest_type_code and 'Arrest Type Code' in df_filtered.columns:
@@ -894,7 +938,8 @@ class DataProcessor:
             
             map_filepath_abs = None # Initialize
             if not df_filtered.empty:
-                distances = self._haversine(center_lat, center_lon, df_filtered['LAT'].values, df_filtered['LON'].values)
+                # Use extracted_LAT and extracted_LON for Haversine and plotting
+                distances = self._haversine(center_lat, center_lon, df_filtered['extracted_LAT'].values, df_filtered['extracted_LON'].values)
                 df_filtered = df_filtered[distances <= radius_km].copy() # Copy results after final filter
                 df_filtered['distance_km'] = distances[distances <= radius_km]
                 logger.info(f"Query 4: Found {len(df_filtered)} points within radius.")
@@ -916,23 +961,19 @@ class DataProcessor:
                         marker_cluster = MarkerCluster().add_to(m)
                         # ----------------------------
 
-                        # REMOVE marker limit
-                        # max_markers = 1000 
-                        # df_to_plot = df_filtered.head(max_markers)
-                        # if len(df_filtered) > max_markers:
-                        #      logger.warning(f"Query 4: Limiting map markers to {max_markers} out of {len(df_filtered)} results.")
                         df_to_plot = df_filtered # Plot all points
 
                         for idx, row in df_to_plot.iterrows():
                             popup_text = f"<b>Arrest:</b> {row.get('Report ID', 'N/A')}<br>"
-                            popup_text += f"<b>Date:</b> {row.get('Arrest Date', '').strftime('%Y-%m-%d')}<br>"
+                            popup_text += f"<b>Date:</b> {row.get('Arrest Date', pd.NaT).strftime('%Y-%m-%d') if pd.notna(row.get('Arrest Date')) else 'N/A'}<br>"
                             popup_text += f"<b>Address:</b> {row.get('Address', 'N/A')}<br>"
                             popup_text += f"<b>Charge:</b> {row.get('Charge Group Description', 'N/A')}<br>"
-                            popup_text += f"<b>Coords:</b> ({row['LAT']:.4f}, {row['LON']:.4f})"
+                            # Use extracted coordinates for popup as well
+                            popup_text += f"<b>Coords:</b> ({row['extracted_LAT']:.4f}, {row['extracted_LON']:.4f})"
                             
                             # --- Add marker TO THE CLUSTER --- 
                             folium.CircleMarker(
-                                location=[row['LAT'], row['LON']],
+                                location=[row['extracted_LAT'], row['extracted_LON']], # Use extracted coords
                                 radius=5,
                                 popup=folium.Popup(popup_text, max_width=300),
                                 tooltip=f"Arrest {row.get('Report ID', '')}",
@@ -968,9 +1009,12 @@ class DataProcessor:
                  final_title += " (No Results)"
                  return {'status': 'OK', 'data': [], 'headers': [], 'map_filepath': None, 'title': final_title}
 
-            # Prepare tabular data as before
+            # Prepare tabular data as before, using extracted_LAT/LON for output if original LAT/LON are now supplemental
+            # Ensure 'LAT' and 'LON' in output_cols refer to the consistent, cleaned coordinates
+            df_filtered.rename(columns={'extracted_LAT': 'LAT', 'extracted_LON': 'LON'}, inplace=True)
+
             output_cols = ['Report ID', 'Arrest Date', 'Area Name', 'Address', 'LAT', 'LON', 'Charge Group Description', 'Arrest Type Code', 'distance_km']
-            output_cols = [col for col in output_cols if col in df_filtered.columns]
+            output_cols = [col for col in output_cols if col in df_filtered.columns] # Keep only existing columns
             result_df = df_filtered[output_cols].sort_values(by='distance_km')
             if 'Arrest Date' in result_df.columns: result_df['Arrest Date'] = result_df['Arrest Date'].dt.strftime('%Y-%m-%d')
             if 'distance_km' in result_df.columns: result_df['distance_km'] = result_df['distance_km'].round(2)

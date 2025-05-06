@@ -521,7 +521,7 @@ columns_to_keep = [
     'Arrest Type Code', 'Charge', 'Charge Description', 'Address', 'Cross Street',
     'Location', 'LAT', 'LON', 'Booking Date', 'Booking Time', 'Booking Location',
     'Booking Location Code', 'Arrest Year', 'Arrest Month', 'Arrest Day',
-    'Arrest Weekday', 'Arrest Hour', 'Location_Cluster'
+    'Arrest Weekday', 'Arrest Hour', 'Location_Cluster', 'Location_GeoJSON'
 ]
 
 # Include dummy variables if they were created
