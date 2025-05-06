@@ -362,8 +362,171 @@ if 'Arrest Year' in df_clean.columns and 'Arrest Month' in df_clean.columns:
     plt.close()
     print("Created plot: monthly_arrest_trends.png")
 
-# Save the processed dataset
-df_clean.to_csv('Data/processed_arrest_data.csv', index=False)
-print("\nSaved processed dataset to Data/processed_arrest_data.csv")
+# --- New Plots ---
 
-print("\nData analysis and preprocessing complete!") 
+# Plot 6: Crimes by Gender 
+def plot_crimes_by_gender(df, plots_dir):
+    print("\n6. Creating crimes by gender plot...")
+    if 'Sex Code' not in df.columns:
+        print("Skipping plot: 'Sex Code' column not found.")
+        return
+    
+    plt.figure(figsize=(10, 6))
+    # Create a DataFrame for plotting
+    gender_counts = df['Sex Code'].value_counts().reset_index()
+    gender_counts.columns = ['Sex Code', 'Number of Arrests']
+    
+    
+    sns.barplot(x='Sex Code', y='Number of Arrests', data=gender_counts)
+    plt.title('Number of Arrests by Gender')
+    plt.xlabel('Gender (Sex Code)')
+    plt.ylabel('Number of Arrests')
+    plt.tight_layout()
+    save_path = os.path.join(plots_dir, 'crimes_by_gender.png')
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Created plot: {save_path}")
+
+# Plot 7: Stacked Bar Chart of Arrest Types by Demographic Groups
+def plot_arrest_types_by_demographics(df, plots_dir):
+    print("\n7. Creating arrest types by demographics plot...")
+    # Ensure required columns are present
+    required_cols = ['Age'] # Charge Group Description is no longer directly plotted here
+    # Check for 'Descent Description' first, fallback to 'Descent Code'
+    ethnicity_col = None
+    if 'Descent Description' in df.columns and df['Descent Description'].isnull().sum() < len(df) * 0.5:
+        ethnicity_col = 'Descent Description'
+        print("Using 'Descent Description' for ethnicity labeling.")
+    elif 'Descent Code' in df.columns:
+        ethnicity_col = 'Descent Code'
+        print("Using 'Descent Code' for ethnicity labeling. Consider mapping codes to descriptions for better readability if 'Descent Description' is unavailable or sparse.")
+    else:
+        print("Skipping plot: Neither 'Descent Description' nor 'Descent Code' column found.")
+        return
+    
+    required_cols.append(ethnicity_col)
+    if not all(col in df.columns for col in required_cols):
+        print(f"Skipping plot: Missing one or more required columns for demographics: {required_cols}")
+        return
+
+    df_plot = df.copy()
+
+    bins = [10, 17, 25, 35, 45, 55, 65, 100]
+    labels = ['10-17', '18-25', '26-35', '36-45', '46-55', '56-65', '66+']
+    df_plot['Age Category'] = pd.cut(df_plot['Age'], bins=bins, labels=labels, right=True, include_lowest=True)
+
+    df_plot[ethnicity_col] = df_plot[ethnicity_col].astype(str).fillna('Unknown')
+    df_plot['Age Category'] = df_plot['Age Category'].astype(str).fillna('Unknown')
+    df_plot['Demographic Group'] = df_plot['Age Category'] + '_' + df_plot[ethnicity_col]
+    
+    # Calculate total arrests per demographic group
+    total_arrests_by_demographic = df_plot.groupby('Demographic Group').size()
+
+    if total_arrests_by_demographic.empty:
+        print("No data after grouping for demographic arrests. Skipping plot.")
+        return
+
+    # Select top N demographic groups
+    num_top_demographics = 10 # Can be adjusted
+    if len(total_arrests_by_demographic) < num_top_demographics:
+        print(f"Warning: Fewer than {num_top_demographics} demographic groups available ({len(total_arrests_by_demographic)}). Using all available.")
+        num_top_demographics = len(total_arrests_by_demographic)
+    
+    if num_top_demographics == 0:
+        print("Not enough demographic groups to plot. Skipping.")
+        return
+
+    # Get the top N groups, already sorted by groupby().size() if we sort later by values
+    plot_data = total_arrests_by_demographic.nlargest(num_top_demographics)
+
+    if plot_data.empty:
+        print("No data to plot after selecting top demographic groups.")
+        return
+
+    plt.figure(figsize=(18, 10))
+    plot_data.plot(kind='bar', colormap='viridis') # Simple bar chart
+    
+    plt.title(f'Total Arrests for Top {num_top_demographics} Demographic Groups')
+    plt.xlabel(f'Demographic Group (Age Category_{ethnicity_col})')
+    plt.ylabel('Total Number of Arrests')
+    plt.xticks(rotation=45, ha='right')
+    # No legend needed for charge types anymore
+    plt.tight_layout()
+    save_path = os.path.join(plots_dir, 'total_arrests_by_demographics.png') # New filename
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Created plot: {save_path}")
+
+# Plot 8: Violin Plot of Age Distribution by Arrest Type
+def plot_age_distribution_by_arrest_type(df, plots_dir):
+    print("\n8. Creating age distribution by arrest type plot...")
+    required_cols = ['Age', 'Charge Group Description']
+    if not all(col in df.columns for col in required_cols):
+        print(f"Skipping plot: Missing one or more required columns: {required_cols}")
+        return
+
+    # For readability, let's consider top N charge groups
+    top_n_charges = df['Charge Group Description'].value_counts().nlargest(5).index
+    plot_df = df[df['Charge Group Description'].isin(top_n_charges)]
+
+    if plot_df.empty:
+        print("No data to plot after filtering for top charge groups.")
+        return
+
+    plt.figure(figsize=(18, 10))
+    sns.violinplot(x='Charge Group Description', y='Age', data=plot_df, inner=None, palette='muted') # inner=None to remove bars inside violins
+    # Overlay box plots
+    # Iterate over each charge group to plot a narrower boxplot
+    unique_charges = plot_df['Charge Group Description'].unique()
+    # Ensure correct positioning of boxplots over violin plots
+    ax = plt.gca()
+    for i, charge_name in enumerate(ax.get_xticklabels()):
+        charge_name_text = charge_name.get_text()
+        if charge_name_text in unique_charges:
+             subset = plot_df[plot_df['Charge Group Description'] == charge_name_text]
+             sns.boxplot(y='Age', data=subset, width=0.15, boxprops={'zorder': 2, 'facecolor':'white'}, ax=ax, positions=[i])
+
+    plt.title('Age Distribution by Arrest Type (Top 5 Charges) with Box Plots')
+    plt.xlabel('Charge Group Description')
+    plt.ylabel('Age')
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    save_path = os.path.join(plots_dir, 'age_distribution_by_arrest_type.png')
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Created plot: {save_path}")
+
+
+# Call the new plot functions
+plot_crimes_by_gender(df_clean.copy(), plots_dir)
+plot_arrest_types_by_demographics(df_clean.copy(), plots_dir)
+plot_age_distribution_by_arrest_type(df_clean.copy(), plots_dir)
+
+
+# Step 6: Save processed data
+# ------------------------------------------------------------
+print("\n6. Saving processed data...")
+# Select relevant columns for the processed dataset
+columns_to_keep = [
+    'Report ID', 'Arrest Date', 'Time', 'Area ID', 'Area Name', 'Reporting District',
+    'Age', 'Sex Code', 'Descent Code', 'Charge Group Code', 'Charge Group Description',
+    'Arrest Type Code', 'Charge', 'Charge Description', 'Address', 'Cross Street',
+    'Location', 'LAT', 'LON', 'Booking Date', 'Booking Time', 'Booking Location',
+    'Booking Location Code', 'Arrest Year', 'Arrest Month', 'Arrest Day',
+    'Arrest Weekday', 'Arrest Hour', 'Location_Cluster'
+]
+
+# Include dummy variables if they were created
+dummy_cols_to_add = [col for col in df_clean.columns if any(prefix in col for prefix in [cat_col + '_' for cat_col in categorical_cols])]
+final_columns = [col for col in columns_to_keep if col in df_clean.columns] + dummy_cols_to_add
+
+df_processed = df_clean[final_columns].copy()
+
+# Save the processed DataFrame to a new CSV file
+processed_file_path = 'Data/processed_arrest_data.csv'
+df_processed.to_csv(processed_file_path, index=False)
+print(f"\nSaved processed dataset to {processed_file_path}")
+
+
+print("\nData analysis and preprocessing complete.")
+print("Visualizations saved in the 'Data/plots' directory.") 
