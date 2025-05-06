@@ -8,30 +8,20 @@ import logging
 import os
 import tempfile
 import sys
-
 from datetime import datetime
-# Add the parent directory to sys.path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-# Import shared modules
 from shared.constants import *
 from shared.protocol import Message, send_message, receive_message
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-
-
-# --- Configure logging to file ---
 TEMP_DIR = tempfile.gettempdir()
 SERVER_LOG_FILE = os.path.join(TEMP_DIR, 'server_temp.log')
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     filename=SERVER_LOG_FILE, # <-- Log to file
-    filemode='w'              # <-- Overwrite file each time
-    # handlers=[ ... ] # <-- Remove console handler
+    filemode='w'
 )
 logger = logging.getLogger('server')
-
-
 
 class ClientHandler(threading.Thread):
     """Thread for handling a client connection"""
@@ -60,11 +50,8 @@ class ClientHandler(threading.Thread):
         logger.info(f"HANDLER: Thread started for client {self.address}")
         client_removed_from_list = False
         try:
-            # --- SEND WELCOME/CONFIRMATION MESSAGE ---
             try:
                 # Example: Send a simple confirmation or server info
-                # You could define a new message type like MSG_CONNECTED_OK
-                # For simplicity, we reuse SERVER_MESSAGE for now
                 connect_ok_msg = Message(MSG_SERVER_MESSAGE, {
                     'timestamp': datetime.now().isoformat(),
                     'message': "Connection accepted."
@@ -74,7 +61,6 @@ class ClientHandler(threading.Thread):
             except Exception as send_err:
                  logger.error(f"HANDLER: Failed to send initial confirmation to {self.address}: {send_err}", exc_info=True)
                  self.running = False # Cannot proceed if initial send failed
-            # ------------------------------------------
 
             last_queue_check = time.time()
             self.socket.settimeout(0.1)
@@ -139,7 +125,6 @@ class ClientHandler(threading.Thread):
                       client_removed_from_list = True
                  except Exception as remove_err:
                       logger.error(f"HANDLER: Error removing client {self.address} from list before cleanup: {remove_err}", exc_info=True)
-            # ---------------------------------------------------
 
             logger.info(f"HANDLER: Exited main loop for client {self.address}. Running state: {self.running}")
 
@@ -175,28 +160,22 @@ class ClientHandler(threading.Thread):
     
     def handle_register(self, data):
         """Handle a registration request"""
-        # Extract registration data
         name = data.get('name')
         nickname = data.get('nickname')
         email = data.get('email')
         password = data.get('password')
-        
-        # Get the request ID sent by the client
         request_id = data.get('request_id')
         
-        # Validate data
         if not all([name, nickname, email, password]):
             self.send_error("Registration failed: missing required fields", request_id=request_id)
             return
         
-        # Basic email format validation using regex
-        email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$" # Corrected closing quote
+        email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
         if not re.match(email_regex, email):
              self.send_error("Registration failed: invalid email format", request_id=request_id)
              return
 
         try:
-            # Register client in database
             success = self.db.register_client(name, nickname, email, password)
             
             if success:
@@ -218,30 +197,24 @@ class ClientHandler(threading.Thread):
     
     def handle_login(self, data):
         """Handle a login request"""
-        # Prevent duplicate login processing (patch added)
         if getattr(self, 'client_info', None) is not None:
             logger.warning(f"Duplicate login attempt ignored for client {self.address}")
             return
             
-        # Extract login data
         email = data.get('email')
         password = data.get('password')
         
-        # Validate data
         if not all([email, password]):
             self.send_error("Login failed: missing required fields")
             return
         
         try:
-            # Check credentials
             client_info = self.db.check_login(email, password)
             
             if client_info:
-                # Store client info
                 self.client_info = client_info
                 
                 try:
-                    # Start a new session
                     address_str = f"{self.address[0]}:{self.address[1]}"
                     session_info = self.db.start_session(
                         client_info['id'], 
@@ -252,23 +225,19 @@ class ClientHandler(threading.Thread):
                     if not self.session_id:
                         raise Exception("Failed to retrieve session ID after starting session.")
                     
-                    # Add to active clients
                     self.server.add_active_client(self)
                     self.was_logged_in = True
                     
                     logger.info(f"Client logged in: {client_info['nickname']} ({client_info['email']})")
                     
-                    # Send login response
                     self.send_response(MSG_LOGIN, {
                         'status': STATUS_OK,
                         'message': "Login successful",
                         'client_info': client_info
                     })
                     
-                    # Log to server activity
                     self.server.log_activity(f"Client logged in: {client_info['nickname']} ({client_info['email']})")
                 except sqlite3.OperationalError as sqlerr:
-                    # Handle specific SQLite errors
                     error_msg = str(sqlerr)
                     logger.error(f"SQLite error during login: {error_msg}")
                     
@@ -287,22 +256,17 @@ class ClientHandler(threading.Thread):
         """Handle a logout request"""
         if self.client_info and self.session_id:
             try:
-                # End session in database
                 self.db.end_session(self.session_id)
                 
-                # Log the logout
                 logger.info(f"Client logged out: {self.client_info['nickname']} ({self.client_info['email']})")
                 
-                # Send logout response
                 self.send_response(MSG_LOGOUT, {
                     'status': STATUS_OK,
                     'message': "Logout successful"
                 })
                 
-                # Log to server activity
                 self.server.log_activity(f"Client logged out: {self.client_info['nickname']} ({self.client_info['email']})")
                 
-                # Clear client info
                 self.client_info = None
                 self.session_id = None
                 self.session_start_time = None
@@ -362,7 +326,6 @@ class ClientHandler(threading.Thread):
             if isinstance(result, dict):
                 keys_sample = list(result.keys())[:5] # Show first 5 keys
                 logger.debug(f"HANDLE_QUERY: Result keys sample: {keys_sample}")
-            # ----------------------------------------
 
             if result.get('status') == 'error':
                 logger.error(f"Query {query_type_id} error: {result.get('message')}")
@@ -376,7 +339,7 @@ class ClientHandler(threading.Thread):
                 'query_type': query_type_id,
                 'title': result.get('title', f'{query_type_id} Results'),
                 'message': "Query successful"
-                # Intentionally leave out data/headers/map/plot initially
+                # Intentionally leave out data/headers/map/plot initially because they are not always present
             }
 
             # Add data/headers ONLY if they exist in the processor result
@@ -402,9 +365,6 @@ class ClientHandler(threading.Thread):
             # --- Log the response data being sent --- 
             logger.info(f"HANDLE_QUERY: Sending response_data to client. Map path included: {response_data.get('map_filepath') is not None}")
             logger.debug(f"HANDLE_QUERY: response_data keys: {list(response_data.keys())}")
-            # ---------------------------------------
-
-            # Send response
             self.send_response(MSG_QUERY_RESULT, response_data)
 
             # Log to server activity
@@ -412,7 +372,6 @@ class ClientHandler(threading.Thread):
             
             # --- Notify server to trigger potential GUI updates (e.g., All Clients list) ---
             self.server.notify_query_processed(self.client_info['id'])
-            # ----------------------------------------------------------------------------------
 
         except AttributeError as ae:
              logger.error(f"DataProcessor missing method for query '{query_type_id}': {ae}", exc_info=True)
@@ -447,7 +406,6 @@ class ClientHandler(threading.Thread):
                  }
             elif metadata_req_type == 'arrest_type_codes':
                  metadata_result = self.data_processor.get_unique_arrest_type_codes()
-            # ---------------------
             else:
                 self.send_error(f"Unknown metadata type requested: {metadata_req_type}")
                 return

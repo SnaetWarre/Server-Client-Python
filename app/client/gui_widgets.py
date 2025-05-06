@@ -1,4 +1,3 @@
-# Import PySide6 modules
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTextEdit, QComboBox, QSpinBox, QGroupBox,
@@ -17,15 +16,13 @@ import logging
 import os
 import tempfile
 
-# --- Configure GUI logging to file ---
 TEMP_DIR_GUI = tempfile.gettempdir()
 CLIENT_GUI_LOG_FILE = os.path.join(TEMP_DIR_GUI, 'client_gui_temp.log')
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename=CLIENT_GUI_LOG_FILE, # <-- Log to file
-    filemode='w'                  # <-- Overwrite file each time
-    # handlers=[ ... ]          # <-- Remove console handler
+    filename=CLIENT_GUI_LOG_FILE,
+    filemode='w'
 )
 logger = logging.getLogger('client_gui')
 
@@ -34,40 +31,29 @@ class LoginWidget(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        
         self.setup_ui()
     
     def setup_ui(self):
         """Set up the UI for the login widget"""
         layout = QVBoxLayout(self)
-        
-        # Form layout for login fields
         form_layout = QFormLayout()
         
-        # Email field
         self.email_edit = QLineEdit()
         form_layout.addRow("Email:", self.email_edit)
         
-        # Password field
         self.password_edit = QLineEdit()
         self.password_edit.setEchoMode(QLineEdit.Password)
         form_layout.addRow("Password:", self.password_edit)
         
-        # Add form layout to main layout
         layout.addLayout(form_layout)
-        
-        # Add some space
         layout.addSpacing(20)
         
-        # Login button
         self.login_button = QPushButton("Login")
         layout.addWidget(self.login_button)
         
-        # Register button
         self.register_button = QPushButton("Register")
         layout.addWidget(self.register_button)
         
-        # Add stretch to push buttons to the top
         layout.addStretch()
 
 
@@ -76,14 +62,11 @@ class RegisterWidget(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        
         self.setup_ui()
     
     def setup_ui(self):
         """Set up the UI for the register widget"""
-
         layout = QVBoxLayout(self)
-        
         form_layout = QFormLayout()
         
         self.name_edit = QLineEdit()
@@ -104,7 +87,6 @@ class RegisterWidget(QWidget):
         form_layout.addRow("Confirm Password:", self.confirm_password_edit)
         
         layout.addLayout(form_layout)
-        
         layout.addSpacing(20)
         
         self.register_button = QPushButton("Register")
@@ -147,7 +129,6 @@ class QueryWidget(QWidget):
         self.parameter_stack.addWidget(self._create_query4_params())
         query_layout.addWidget(self.parameter_stack)
 
-        # Connect query type change to stack change
         self.query_type_combo.currentIndexChanged.connect(self.parameter_stack.setCurrentIndex)
 
         query_group.setLayout(query_layout)
@@ -160,36 +141,28 @@ class QueryWidget(QWidget):
         results_group = QGroupBox("Query Results")
         results_layout = QVBoxLayout()
         
-        # Splitter for Table and Plot
         self.results_splitter = QSplitter(Qt.Vertical)
         
-        # Table for results
         self.results_table = QTableWidget()
-        self.results_table.setColumnCount(5) # Example column count, adjust as needed
-        self.results_table.setHorizontalHeaderLabels(["Report ID", "Date", "Area", "Charge", "Age"]) # Example headers
+        self.results_table.setColumnCount(5)
+        self.results_table.setHorizontalHeaderLabels(["Report ID", "Date", "Area", "Charge", "Age"])
         self.results_table.setAlternatingRowColors(True)
         self.results_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.results_table.verticalHeader().setVisible(False)
         self.results_splitter.addWidget(self.results_table)
 
-        # --- Wrap plot label in a Scroll Area --- 
         self.plot_scroll_area = QScrollArea()
-        self.plot_scroll_area.setWidgetResizable(True) # Allow widget inside to resize
-        self.plot_scroll_area.setAlignment(Qt.AlignCenter) # Center the widget if smaller
-        self.plot_scroll_area.setStyleSheet("background-color: #1E1E1E;") # Match dark theme bg
+        self.plot_scroll_area.setWidgetResizable(True)
+        self.plot_scroll_area.setAlignment(Qt.AlignCenter)
+        self.plot_scroll_area.setStyleSheet("background-color: #1E1E1E;")
 
-        # Use a FigureCanvasQTAgg widget to display the plot
-        # We need a placeholder figure initially
         from matplotlib.figure import Figure
         placeholder_fig = Figure(figsize=(5, 4), dpi=100)
         self.plot_canvas = FigureCanvasQTAgg(placeholder_fig)
 
-        # Set the canvas as the widget for the scroll area
         self.plot_scroll_area.setWidget(self.plot_canvas)
-        self.plot_scroll_area.hide() # Hide scroll area initially
-        # -----------------------------------------
+        self.plot_scroll_area.hide()
 
-        # Add the scroll area (containing the canvas) to the splitter
         self.results_splitter.addWidget(self.plot_scroll_area)
         
         results_layout.addWidget(self.results_splitter)
@@ -197,26 +170,19 @@ class QueryWidget(QWidget):
         
         layout.addWidget(results_group, 1) 
 
-        # Store the current figure for the viewer dialog
         self.current_figure = None
         self.plot_canvas.installEventFilter(self)
 
     def eventFilter(self, source, event):
         """Handle events, specifically clicks on the plot canvas."""
-        # Check if the source is the plot canvas
         if source == self.plot_canvas and event.type() == QEvent.MouseButtonPress:
             if event.button() == Qt.LeftButton and self.current_figure:
-                # --- ADD LOGGING ---
                 logger.info("Plot canvas clicked, emitting plot_clicked signal with figure.")
-                # -------------------
-                # Emit signal with the stored figure object
                 self.plot_clicked.emit(self.current_figure)
-                return True # Event handled
-        # Pass event along if not handled
+                return True
         return False
 
-    # Add signal for plot clicks
-    plot_clicked = Signal(object) # Emits the matplotlib Figure object
+    plot_clicked = Signal(object)
 
     def _create_query1_params(self):
         """Create parameter widget for Query 1"""
@@ -266,36 +232,32 @@ class QueryWidget(QWidget):
         self.q3_descent_list.setMinimumHeight(100) 
         self.q3_descent_list.setMaximumHeight(200) 
 
-        # Charge Group
         self.q3_charge_combo = QComboBox()
-        self.q3_charge_combo.addItems(["Optional: Loading charge groups..."]) # Changed text for clarity
+        self.q3_charge_combo.addItems(["Optional: Loading charge groups..."])
 
-        # Arrest Type (New)
-        self.q3_arrest_type_combo = QComboBox() # <<< DEFINE q3_arrest_type_combo
-        self.q3_arrest_type_combo.addItems(["Optional: Loading arrest types..."]) # Changed text
+        self.q3_arrest_type_combo = QComboBox()
+        self.q3_arrest_type_combo.addItems(["Optional: Loading arrest types..."])
 
         layout.addRow("Geslacht (Sex Code):", sex_layout)
         layout.addRow("Etniciteit (Descent):", self.q3_descent_list)
-        layout.addRow("Charge Group (optioneel):", self.q3_charge_combo) # Corrected label and widget
-        layout.addRow("Arrestatietype (optioneel):", self.q3_arrest_type_combo) # Added new row for arrest type
+        layout.addRow("Charge Group (optioneel):", self.q3_charge_combo)
+        layout.addRow("Arrestatietype (optioneel):", self.q3_arrest_type_combo)
         return widget
-
 
     def _create_query4_params(self):
         """Create parameter widget for Query 4"""
         widget = QWidget()
         layout = QFormLayout(widget)
 
-        # --- Add LAT/LON SpinBoxes ---
         self.q4_center_lat_spin = QDoubleSpinBox()
         self.q4_center_lat_spin.setRange(-90.0, 90.0)
         self.q4_center_lat_spin.setDecimals(6) 
-        self.q4_center_lat_spin.setValue(34.0522) # Example: Default to LA center
+        self.q4_center_lat_spin.setValue(34.0522)
 
         self.q4_center_lon_spin = QDoubleSpinBox()
         self.q4_center_lon_spin.setRange(-180.0, 180.0)
         self.q4_center_lon_spin.setDecimals(6) 
-        self.q4_center_lon_spin.setValue(-118.2437) # Example: Default to LA center
+        self.q4_center_lon_spin.setValue(-118.2437)
 
         lat_lon_layout = QHBoxLayout()
         lat_lon_layout.addWidget(QLabel("Latitude:"))
@@ -304,7 +266,6 @@ class QueryWidget(QWidget):
         lat_lon_layout.addWidget(QLabel("Longitude:"))
         lat_lon_layout.addWidget(self.q4_center_lon_spin)
         layout.addRow("Centrumpunt (LAT/LON):", lat_lon_layout)
-        # ---------------------------
 
         self.q4_radius_spin = QDoubleSpinBox()
         self.q4_radius_spin.setRange(0.1, 100.0)
@@ -324,21 +285,15 @@ class QueryWidget(QWidget):
 
     def display_results(self, results):
         """Display query results in the table"""
-        # --- Reset splitter sizes when showing table ---
         original_sizes = self.results_splitter.sizes()
-        # Default: give table more space initially if we have sizes, else split roughly 70/30
         table_height = int(self.results_splitter.height() * 0.7) if sum(original_sizes) == 0 else original_sizes[0]
         plot_height = self.results_splitter.height() - table_height
         self.results_splitter.setSizes([table_height, plot_height]) 
-        # ----------------------------------------------
 
-        self.results_table.setRowCount(0) # Clear previous results
-        self.plot_scroll_area.hide() # Hide plot scroll area
-        self.results_table.show() # Show table by default
+        self.results_table.setRowCount(0)
+        self.plot_scroll_area.hide()
+        self.results_table.show()
 
-        # Check if results are empty or invalid
-        # If no results found, display a message in the table
-        # spanning across all columns and exit the function
         if not results or 'data' not in results or not results['data']:
             self.results_table.setRowCount(1)
             no_results_item = QTableWidgetItem("No results found or empty data.")
@@ -352,26 +307,22 @@ class QueryWidget(QWidget):
         headers = results.get('headers', [])
         
         if not headers:
-             # Attempt to infer headers if not provided
             if isinstance(data[0], dict):
                 headers = list(data[0].keys())
             else:
-                # Fallback if data format is unexpected
                 headers = [f"Column {i+1}" for i in range(len(data[0]))] if data else []
 
         if not headers:
-             logger.warning("Could not determine headers for results table.")
-             self.results_table.setRowCount(1)
-             item = QTableWidgetItem("Error: Could not determine result headers.")
-             item.setTextAlignment(Qt.AlignCenter)
-             self.results_table.setItem(0, 0, item)
-             self.results_table.setSpan(0, 0, 1, 1) 
-             return
-
+            logger.warning("Could not determine headers for results table.")
+            self.results_table.setRowCount(1)
+            item = QTableWidgetItem("Error: Could not determine result headers.")
+            item.setTextAlignment(Qt.AlignCenter)
+            self.results_table.setItem(0, 0, item)
+            self.results_table.setSpan(0, 0, 1, 1) 
+            return
 
         self.results_table.setColumnCount(len(headers))
         self.results_table.setHorizontalHeaderLabels(headers)
-        
         self.results_table.setRowCount(len(data))
         
         for row_idx, row_data in enumerate(data):
@@ -380,20 +331,18 @@ class QueryWidget(QWidget):
                     item = QTableWidgetItem(str(row_data.get(header, "")))
                     self.results_table.setItem(row_idx, col_idx, item)
             elif isinstance(row_data, (list, tuple)):
-                 if len(row_data) == len(headers):
+                if len(row_data) == len(headers):
                     for col_idx, cell_data in enumerate(row_data):
                         item = QTableWidgetItem(str(cell_data))
                         self.results_table.setItem(row_idx, col_idx, item)
-                 else:
-                     logger.warning(f"Row {row_idx} data length mismatch: expected {len(headers)}, got {len(row_data)}")
-                     item = QTableWidgetItem("Data format error")
-                     self.results_table.setItem(row_idx, 0, item) # Indicate error in first cell
+                else:
+                    logger.warning(f"Row {row_idx} data length mismatch: expected {len(headers)}, got {len(row_data)}")
+                    item = QTableWidgetItem("Data format error")
+                    self.results_table.setItem(row_idx, 0, item)
             else:
-                # Handle unexpected row format
                 logger.warning(f"Unexpected data format in row {row_idx}: {type(row_data)}")
                 item = QTableWidgetItem("Unexpected data format")
                 self.results_table.setItem(row_idx, 0, item)
-
 
         self.results_table.resizeColumnsToContents()
         logger.info(f"Displayed {len(data)} results.")
@@ -406,44 +355,23 @@ class QueryWidget(QWidget):
             return
             
         try:
-            # Store the figure for potential click events
             self.current_figure = fig
-            
-            # Create a NEW canvas with the received figure
             self.plot_canvas = FigureCanvasQTAgg(fig)
             
-            # --- Prevent blurry scaling --- 
-            # Calculate native size based on figure DPI
+            # Calculate native size based on figure DPI to prevent blurry scaling
             dpi = fig.get_dpi()
             width_inches = fig.get_figwidth()
             height_inches = fig.get_figheight()
             width_pixels = int(width_inches * dpi)
             height_pixels = int(height_inches * dpi)
-            # Set the canvas to its native pixel size
             self.plot_canvas.setFixedSize(width_pixels, height_pixels)
-            # --------------------------- 
             
-            # Set the new canvas as the widget for the scroll area
             self.plot_scroll_area.setWidget(self.plot_canvas)
-
-            # Re-install the event filter on the NEW canvas
             self.plot_canvas.installEventFilter(self)
-
             self.results_table.hide()
             self.plot_scroll_area.show()
             
-            # No need to resize splitter here, let scroll area handle it
-            # plot_height = self.results_splitter.height()
-            # table_height = 0
-            # self.results_splitter.setSizes([table_height, plot_height])
-
             logger.info(f"Matplotlib Figure displayed (native size: {width_pixels}x{height_pixels}) using FigureCanvasQTAgg.")
-            
-            # TODO: Add title display? (Canvas doesn't have setTitle like QLabel)
-            # Maybe add a separate QLabel above the scroll area for the title.
-            
-            # TODO: Implement click-to-enlarge for canvas?
-            # This would require custom event handling on the canvas widget.
 
         except Exception as e:
             logger.error(f"Error displaying plot with FigureCanvasQTAgg: {e}", exc_info=True)
@@ -451,17 +379,15 @@ class QueryWidget(QWidget):
             
     def display_error_in_plot_area(self, message):
         """Displays an error message in the plot canvas area"""
-        from matplotlib.figure import Figure # Import Figure locally for error display
-        # Create a simple figure with error text
+        from matplotlib.figure import Figure
         error_fig = Figure()
         ax = error_fig.add_subplot(111)
         ax.text(0.5, 0.5, message, ha='center', va='center', color='red', wrap=True)
         ax.set_xticks([])
         ax.set_yticks([])
-        # Create a new canvas for the error message
         self.plot_canvas = FigureCanvasQTAgg(error_fig)
         self.plot_scroll_area.setWidget(self.plot_canvas)
-        self.plot_scroll_area.show() # Show scroll area with error message
+        self.plot_scroll_area.show()
         self.results_table.hide()
 
     def clear_results(self):
@@ -470,7 +396,7 @@ class QueryWidget(QWidget):
         table_height = int(self.results_splitter.height() * 0.7) if sum(original_sizes) == 0 else original_sizes[0]
         plot_height = self.results_splitter.height() - table_height
         self.results_splitter.setSizes([table_height, plot_height])
-        # ----------------------------------------
+        
         self.results_table.setRowCount(0)
         self.results_table.setColumnCount(0)
         # Clear the plot by setting a blank figure
