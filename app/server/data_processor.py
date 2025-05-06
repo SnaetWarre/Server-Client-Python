@@ -30,7 +30,7 @@ sns.set_palette('viridis') # Keep for other plots
 logger = logging.getLogger('data_processor')
 
 # Import the mapping
-from shared.constants import DESCENT_CODE_MAP
+from shared.constants import DESCENT_CODE_MAP, ARREST_TYPE_CODE_MAP
 
 class DataProcessor:
     """Data processor for handling queries on the dataset"""
@@ -622,14 +622,29 @@ class DataProcessor:
              return None, None
 
     def get_unique_arrest_type_codes(self):
-        """Returns a sorted list of unique arrest type codes."""
+        """Returns a sorted list of unique arrest type codes with descriptions.
+        Each item in the list is a dictionary: {'code': str, 'description': str}
+        """
         if self.df.empty: return []
         try:
-            # Use 'Arrest Type Code' column
-            codes = self.df['Arrest Type Code'].dropna().unique().tolist()
-            return sorted([c for c in codes if isinstance(c, str)]) # Filter out non-strings
+            unique_codes = self.df['Arrest Type Code'].dropna().unique().tolist()
+            # Filter out non-strings and sort the codes
+            valid_codes = sorted([c for c in unique_codes if isinstance(c, str)])
+
+            # Create list of dictionaries with descriptions
+            arrest_type_list = []
+            for code in valid_codes:
+                description = ARREST_TYPE_CODE_MAP.get(code, f"Unknown Code ({code})") # Fallback
+                arrest_type_list.append({'code': code, 'description': description})
+
+            # Sort the final list by description
+            arrest_type_list.sort(key=lambda item: item['description'])
+            return arrest_type_list
         except KeyError:
              logger.warning("Column 'Arrest Type Code' not found for get_unique_arrest_type_codes.")
+             return []
+        except Exception as e:
+             logger.error(f"Error getting unique arrest type codes: {e}", exc_info=True)
              return []
 
     # --- Query Processing Methods ---
@@ -736,7 +751,7 @@ class DataProcessor:
     def process_query3(self, params):
         """
         Query 3: Demografische Analyse van Arrestaties (Graph)
-        params: {'sex_codes': list[str], 'descent_codes': list[str], 'charge_group': str | None, 'generate_plot': bool}
+        params: {'sex_codes': list[str], 'descent_codes': list[str], 'charge_group': str | None, 'arrest_type_code': str | None, 'generate_plot': bool}
         """
         logger.info(f"Processing Query 3 with params: {params}")
         if self.df.empty: return {'status': 'error', 'message': 'Dataset not loaded'}
@@ -745,6 +760,7 @@ class DataProcessor:
             sex_codes = params['sex_codes']
             descent_codes = params['descent_codes']
             charge_group = params.get('charge_group') # Optional
+            arrest_type_code = params.get('arrest_type_code') # <-- ADDED: Get arrest_type_code
 
             # Filter data
             filtered_df = self.df[
@@ -755,13 +771,22 @@ class DataProcessor:
             if charge_group:
                 filtered_df = filtered_df[filtered_df['Charge Group Description'] == charge_group]
 
+            # --- ADDED: Filter by arrest_type_code if provided ---
+            if arrest_type_code and 'Arrest Type Code' in filtered_df.columns:
+                filtered_df = filtered_df[filtered_df['Arrest Type Code'] == arrest_type_code]
+            # -----------------------------------------------------
+
             if filtered_df.empty:
-                 # Use description in title if possible
                  descent_names = [DESCENT_CODE_MAP.get(dc, dc) for dc in descent_codes]
                  sex_names = ["Male" if sc == 'M' else "Female" if sc == 'F' else sc for sc in sex_codes]
                  title = f'Arrests by Descent ({", ".join(descent_names)}) and Sex ({", ".join(sex_names)}) - No Data'
                  if charge_group:
                       title += f' for {charge_group}'
+                 # --- ADDED: Append arrest type to "No Data" title ---
+                 if arrest_type_code:
+                     arrest_type_desc = ARREST_TYPE_CODE_MAP.get(arrest_type_code, arrest_type_code)
+                     title += f' (Type: {arrest_type_desc})'
+                 # -------------------------------------------------
                  return {'status': 'OK', 'data': [], 'headers': [], 'plot': None, 'title': title}
 
             # --- NEW Plotting Logic --- 
@@ -793,6 +818,12 @@ class DataProcessor:
             # Add charge group to title if specified
             if charge_group:
                  plot_title += f'\nCharge Group: {charge_group}'
+            
+            # --- ADDED: Append arrest type to plot_title ---
+            if arrest_type_code:
+                arrest_type_desc = ARREST_TYPE_CODE_MAP.get(arrest_type_code, arrest_type_code)
+                plot_title += f'\nArrest Type: {arrest_type_desc}'
+            # ----------------------------------------------
                  
             ax.set_title(plot_title)
             ax.set_xlabel('Descent')
@@ -1002,7 +1033,8 @@ class DataProcessor:
             # --- Prepare Results --- 
             final_title = f'Arrests within {radius_km}km of ({center_lat:.4f}, {center_lon:.4f})'
             if arrest_type_code:
-                 final_title += f' (Type: {arrest_type_code})'
+                 arrest_type_desc = ARREST_TYPE_CODE_MAP.get(arrest_type_code, arrest_type_code) # Get description
+                 final_title += f' (Type: {arrest_type_desc})' # Use description
                  
             if df_filtered.empty:
                  # Return empty data but indicate no results in title

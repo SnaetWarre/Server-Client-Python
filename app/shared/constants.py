@@ -44,9 +44,17 @@ QUERY_DESCRIPTIONS = {
     QUERY_CORRELATION_ANALYSIS: 'Correlation analysis between features'
 }
 
-# Response status codes
+
 STATUS_OK = 'OK'
 STATUS_ERROR = 'ERROR'
+
+ARREST_TYPE_CODE_MAP = {
+    'F': 'Felony',
+    'M': 'Misdemeanor',
+    'I': 'Infraction',
+    'O': 'Other' # Common generic catch-all
+}
+
 
 # --- Descent Code Mappings ---
 DESCENT_CODE_MAP = {

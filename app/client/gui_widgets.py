@@ -269,12 +269,18 @@ class QueryWidget(QWidget):
         self.q3_descent_list.setMinimumHeight(100) 
         self.q3_descent_list.setMaximumHeight(200) 
 
+        # Charge Group
         self.q3_charge_combo = QComboBox()
-        self.q3_charge_combo.addItems(["Optional: Loading charge types..."])
+        self.q3_charge_combo.addItems(["Optional: Loading charge groups..."]) # Changed text for clarity
+
+        # Arrest Type (New)
+        self.q3_arrest_type_combo = QComboBox() # <<< DEFINE q3_arrest_type_combo
+        self.q3_arrest_type_combo.addItems(["Optional: Loading arrest types..."]) # Changed text
 
         layout.addRow("Geslacht (Sex Code):", sex_layout)
         layout.addRow("Etniciteit (Descent):", self.q3_descent_list)
-        layout.addRow("Arrestatietype (optioneel):", self.q3_charge_combo)
+        layout.addRow("Charge Group (optioneel):", self.q3_charge_combo) # Corrected label and widget
+        layout.addRow("Arrestatietype (optioneel):", self.q3_arrest_type_combo) # Added new row for arrest type
         return widget
 
 

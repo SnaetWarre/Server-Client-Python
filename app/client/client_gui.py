@@ -649,14 +649,35 @@ class ClientGUI(QMainWindow):
              if not isinstance(data, list):
                   logger.warning(f"Received non-list data for metadata {metadata_type}")
                   return
-             arrest_type_combo = self.query_tab.q4_arrest_type_combo
-             arrest_type_combo.clear()
-             arrest_type_combo.addItem("All Types") # Add default 'All' option
-             if data:
-                 arrest_type_combo.addItems([str(item) for item in data])
+             
+             # --- Target both Q3 and Q4 arrest type combo boxes --- 
+             q3_arrest_type_combo = self.query_tab.q3_arrest_type_combo
+             q4_arrest_type_combo = self.query_tab.q4_arrest_type_combo
+             
+             # Clear existing items
+             q3_arrest_type_combo.clear()
+             q4_arrest_type_combo.clear()
+             
+             # Add default 'All Types' option
+             q3_arrest_type_combo.addItem("All Types", None) # Store code None for 'All Types'
+             q4_arrest_type_combo.addItem("All Types", None) # Store code None for 'All Types'
+
+             if data: # Data is a list of dicts: {'code': 'X', 'description': 'Description X'}
+                 for item_data in data:
+                     if isinstance(item_data, dict):
+                         code = item_data.get('code')
+                         desc = item_data.get('description', code) # Fallback to code if no description
+                         if code:
+                             # Add item with description as text, and code as UserData
+                             q3_arrest_type_combo.addItem(f"{desc} ({code})", code)
+                             q4_arrest_type_combo.addItem(f"{desc} ({code})", code)
+                     else:
+                         logger.warning(f"Invalid item format in arrest_type_codes metadata: {item_data}")
              else:
-                 arrest_type_combo.addItem("No types found") # Fallback
-             logger.info(f"Populated Arrest Type Code dropdown.")
+                 q3_arrest_type_combo.addItem("No types found", None) # Fallback
+                 q4_arrest_type_combo.addItem("No types found", None) # Fallback
+             logger.info(f"Populated Arrest Type Code dropdowns for Q3 and Q4.")
+             # -----------------------------------------------------
         else:
             logger.warning(f"Received unknown metadata type: {metadata_type}")
 
@@ -873,6 +894,12 @@ class ClientGUI(QMainWindow):
 
                 charge_group = self.query_tab.q3_charge_combo.currentText()
                 params['charge_group'] = charge_group if "Optional:" not in charge_group else None # Optional
+                
+                # --- ADDED: Get Arrest Type for Query 3 ---
+                selected_q3_arrest_type_code = self.query_tab.q3_arrest_type_combo.currentData() # Get data (code)
+                params['arrest_type_code'] = selected_q3_arrest_type_code # Will be None if 'All Types' is selected
+                # -----------------------------------------
+
                 params['generate_plot'] = True # Explicitly request plot
                 
             elif query_index == 3: # Query 4
@@ -888,8 +915,9 @@ class ClientGUI(QMainWindow):
                  params['start_date'] = self.query_tab.q4_start_date.date().toString(Qt.ISODate)
                  params['end_date'] = self.query_tab.q4_end_date.date().toString(Qt.ISODate)
 
-                 selected_arrest_type = self.query_tab.q4_arrest_type_combo.currentText()
-                 params['arrest_type_code'] = selected_arrest_type if selected_arrest_type != "All Types" else None
+                 # For Query 4, get data (code) from combo box
+                 selected_q4_arrest_type_code = self.query_tab.q4_arrest_type_combo.currentData()
+                 params['arrest_type_code'] = selected_q4_arrest_type_code # Will be None if 'All Types' is selected
 
                  # Note: Server process_query4 needs adjustment to accept center_lat/lon
             else:
