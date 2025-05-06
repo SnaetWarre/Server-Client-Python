@@ -375,22 +375,51 @@ if 'Arrest Year' in df_clean.columns and 'Arrest Month' in df_clean.columns:
 # Plot 6: Crimes by Gender 
 def plot_crimes_by_gender(df, plots_dir):
     print("\n6. Creating crimes by gender plot...")
-    if 'Sex Code' not in df.columns:
-        print("Skipping plot: 'Sex Code' column not found.")
+    if 'Sex Code' not in df.columns or 'Charge Group Description' not in df.columns:
+        print("Skipping plot: 'Sex Code' or 'Charge Group Description' column not found.")
         return
+
+    # For clarity, let's use only the top N charges, otherwise the plot can become too cluttered.
+    top_n_charges = 10  # You can adjust this number
+    common_charges = df['Charge Group Description'].value_counts().nlargest(top_n_charges).index
+
+    # Filter the DataFrame to include only common charges and known genders (e.g., 'M', 'F')
+    df_filtered = df[
+        df['Charge Group Description'].isin(common_charges) & 
+        df['Sex Code'].isin(['M', 'F'])
+    ].copy()
+
+    if df_filtered.empty:
+        print("No data to plot after filtering for top charges and genders.")
+        return
+
+    # Map 'Sex Code' to more readable labels
+    gender_map = {'M': 'Male', 'F': 'Female'}
+    df_filtered['Gender'] = df_filtered['Sex Code'].map(gender_map)
+
+    plt.figure(figsize=(18, 10)) # Increased figure size for better readability
     
-    plt.figure(figsize=(10, 6))
-    # Create a DataFrame for plotting
-    gender_counts = df['Sex Code'].value_counts().reset_index()
-    gender_counts.columns = ['Sex Code', 'Number of Arrests']
+    # Create a grouped bar chart
+    # We group by 'Charge Group Description' and 'Gender', then count arrests and unstack for plotting
+    plot_data = df_filtered.groupby(['Charge Group Description', 'Gender']).size().unstack(fill_value=0)
     
+    # Ensure both genders are present in columns, even if one has no arrests for some charges
+    if 'Male' not in plot_data.columns:
+        plot_data['Male'] = 0
+    if 'Female' not in plot_data.columns:
+        plot_data['Female'] = 0
     
-    sns.barplot(x='Sex Code', y='Number of Arrests', data=gender_counts)
-    plt.title('Number of Arrests by Gender')
-    plt.xlabel('Gender (Sex Code)')
+    plot_data = plot_data[['Male', 'Female']] # Ensure consistent order
+
+    plot_data.plot(kind='bar', ax=plt.gca()) # Use plt.gca() to get current axes
+
+    plt.title(f'Top {top_n_charges} Crimes by Gender')
+    plt.xlabel('Charge Group Description')
     plt.ylabel('Number of Arrests')
+    plt.xticks(rotation=45, ha='right')
+    plt.legend(title='Gender')
     plt.tight_layout()
-    save_path = os.path.join(plots_dir, 'crimes_by_gender.png')
+    save_path = os.path.join(plots_dir, 'crimes_by_gender_and_charge.png') # Updated filename
     plt.savefig(save_path)
     plt.close()
     print(f"Created plot: {save_path}")
