@@ -12,11 +12,9 @@ import pandas as pd
 # Add the parent directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Import server module
 from .server import Server
 from .gui_stylingsheets import DARK_STYLESHEET, LIGHT_STYLESHEET
 
-# Import PySide6 modules
 from PySide6.QtWidgets import (
     QMainWindow, QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QTextEdit, QTabWidget, QTreeWidget, QTreeWidgetItem,
@@ -29,17 +27,13 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 import matplotlib.dates as mdates
 
-
-
-# --- Configure GUI logging to file ---
 TEMP_DIR_GUI = tempfile.gettempdir()
 SERVER_GUI_LOG_FILE = os.path.join(TEMP_DIR_GUI, 'server_gui_temp.log')
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename=SERVER_GUI_LOG_FILE, # <-- Log to file
-    filemode='w'                  # <-- Overwrite file each time
-    # handlers=[ ... ]          # <-- Remove console handler
+    filename=SERVER_GUI_LOG_FILE, 
+    filemode='w'                  
 )
 logger = logging.getLogger('server_gui')
 
@@ -55,10 +49,13 @@ def format_timestamp(ts_str, default="Unknown"):
         return local_dt.strftime("%Y-%m-%d %H:%M:%S")
     except (ValueError, TypeError):
         # Fallback for potentially different formats or non-string types
-        return str(ts_str) # Return original string if parsing fails
+        return str(ts_str) 
 
 class ServerGUI(QMainWindow):
-    """GUI for the server application using PySide6"""
+    """Main window for the Server application.
+    Handles the user interface for controlling the server, managing clients,
+    viewing activity logs, and displaying statistics.
+    """
     
     # Thread-safe Qt signals for cross-thread UI updates
     activity_log_signal = Signal(str, str)
@@ -66,18 +63,15 @@ class ServerGUI(QMainWindow):
     all_clients_list_update_signal = Signal() # Signal for all clients list
     
     def __init__(self):
-        """Initialize the GUI"""
+        """Initialize the GUI, set up settings, signals, and initial UI state."""
         super().__init__()
         
-        # Set window properties
         self.setWindowTitle("Arrest Data Server")
         self.resize(900, 700)
         self.setMinimumSize(800, 600)
         
-        # Initialize settings
+
         self.settings = QSettings("ArrestDataApp", "Server/AppSettings")
-        
-        # Default theme to dark
         self.dark_theme = self.settings.value("dark_theme", True, type=bool)
         
         # Server instance - Initialize to None, created on start
@@ -89,39 +83,25 @@ class ServerGUI(QMainWindow):
         # Hook our Qt signals into the GUI slots
         self.activity_log_signal.connect(self.on_activity_log)
         self.client_list_update_signal.connect(self.update_client_list)
-        self.all_clients_list_update_signal.connect(self.update_all_clients) # Connect new signal
-        
-        # Register server callbacks -> MOVED to start_server after instance creation
-        # self.server.on_activity_log = (
-        #     lambda timestamp, message: self.activity_log_signal.emit(timestamp, message)
-        # )
-        # self.server.on_client_list_update = (
-        #     lambda: self.client_list_update_signal.emit()
-        # )
-        
-        # Setup GUI components
+        self.all_clients_list_update_signal.connect(self.update_all_clients)
+
         self.setup_gui()
+    
+        self.apply_theme()    
         
-        # Apply theme
-        self.apply_theme()
-        
-        # Start update timer
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self.schedule_updates)
-        self.update_timer.start(5000)  # Update every 5 seconds
+        self.update_timer.start(1000) #this is in miliseconds 
     
     def setup_gui(self):
-        """Set up the main GUI layout."""
-        # Central widget and main layout
+        """Set up the main GUI layout including tabs, status bar, and theme toggle."""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # --- Create Tab Widget ---
         self.tab_widget = QTabWidget()
         main_layout.addWidget(self.tab_widget)
 
-        # --- Create Tabs ---
         self.server_control_tab = QWidget()
         self.messaging_tab = QWidget()
         self.client_management_tab = QWidget()
@@ -132,29 +112,24 @@ class ServerGUI(QMainWindow):
         self.tab_widget.addTab(self.client_management_tab, "Client Management")
         self.tab_widget.addTab(self.statistics_tab, "Statistics")
 
-        # --- Populate Tabs ---
         self.setup_server_control_tab_content(self.server_control_tab)
         self.setup_messaging_tab_content(self.messaging_tab)
         self.setup_client_management_tab_content(self.client_management_tab)
-        self.setup_statistics_tab_content(self.statistics_tab) # Reuse existing stats setup for now
+        self.setup_statistics_tab_content(self.statistics_tab)
 
-        # --- Status Bar ---
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Server Idle")
 
-        # --- Theme Toggle Button (Top Right) ---
         self.theme_button = QPushButton("Toggle Theme")
         self.theme_button.setCheckable(True)
         self.theme_button.setChecked(self.dark_theme)
         self.theme_button.clicked.connect(self.toggle_theme)
 
-        # Add theme button to a corner (e.g., using layout tricks or specific toolbar)
-        # For simplicity, adding to the main layout for now, might need refinement
         theme_layout = QHBoxLayout()
         theme_layout.addStretch()
         theme_layout.addWidget(self.theme_button)
-        main_layout.addLayout(theme_layout) # Add it below the tab widget
+        main_layout.addLayout(theme_layout)
 
     def apply_theme(self):
         """Apply the current theme to the application"""
@@ -174,34 +149,28 @@ class ServerGUI(QMainWindow):
         """Sets up the content for the Server Control tab."""
         layout = QVBoxLayout(tab)
 
-        # Server Control Group
         server_control_group = QGroupBox("Server Control")
         server_control_layout = QHBoxLayout()
         server_control_group.setLayout(server_control_layout)
 
-        # Host/Port Inputs (reuse existing setup logic if available, or create new)
         host_port_layout = QFormLayout()
         self.host_input = QLineEdit(self.settings.value("server_host", "127.0.0.1"))
-        self.port_input = QLineEdit(self.settings.value("server_port", "65432"))
+        self.port_input = QLineEdit(self.settings.value("server_port", "8888"))
         self.port_input.setValidator(QIntValidator(1024, 65535)) # Basic port validation
         host_port_layout.addRow("Host:", self.host_input)
         host_port_layout.addRow("Port:", self.port_input)
         server_control_layout.addLayout(host_port_layout)
 
-        # Start/Stop Buttons (reuse existing buttons)
-        button_layout = QVBoxLayout() # Use QVBoxLayout for vertical buttons
+        button_layout = QVBoxLayout()
         self.start_button = QPushButton("Start Server")
         self.start_button.clicked.connect(self.start_server)
         self.stop_button = QPushButton("Stop Server")
         self.stop_button.clicked.connect(self.stop_server)
-        self.stop_button.setEnabled(False)  # Initially disabled
+        self.stop_button.setEnabled(False) 
         button_layout.addWidget(self.start_button)
         button_layout.addWidget(self.stop_button)
-        server_control_layout.addLayout(button_layout) # Add buttons
-        server_control_layout.addStretch() # Push controls left
-
-        # Remove the old theme checkbox if it was previously added here
-        # Example: Find and remove logic that added a theme checkbox to control_layout
+        server_control_layout.addLayout(button_layout)
+        server_control_layout.addStretch()
 
         layout.addWidget(server_control_group)
 
@@ -223,7 +192,6 @@ class ServerGUI(QMainWindow):
         layout = QVBoxLayout(tab)
         splitter = QSplitter(Qt.Vertical) # Split active clients and messaging
 
-        # --- Active Clients ---
         active_clients_group = QGroupBox("Active Clients")
         active_clients_layout = QVBoxLayout()
         active_clients_group.setLayout(active_clients_layout)
@@ -234,11 +202,9 @@ class ServerGUI(QMainWindow):
         active_clients_layout.addWidget(self.active_clients_tree)
         splitter.addWidget(active_clients_group)
 
-        # --- Messaging Area ---
         messaging_area = QWidget()
         messaging_layout = QVBoxLayout(messaging_area)
 
-        # Direct Message
         direct_message_group = QGroupBox("Send Message to Selected Client")
         direct_message_layout = QHBoxLayout()
         direct_message_group.setLayout(direct_message_layout)
@@ -251,7 +217,6 @@ class ServerGUI(QMainWindow):
         direct_message_layout.addWidget(self.send_client_button)
         messaging_layout.addWidget(direct_message_group)
 
-        # Broadcast Message
         broadcast_group = QGroupBox("Send Broadcast Message")
         broadcast_layout = QHBoxLayout()
         broadcast_group.setLayout(broadcast_layout)
@@ -272,7 +237,6 @@ class ServerGUI(QMainWindow):
         layout = QVBoxLayout(tab)
         splitter = QSplitter(Qt.Vertical)
 
-        # All Clients List
         all_clients_group = QGroupBox("All Registered Clients")
         all_clients_layout = QVBoxLayout()
         all_clients_group.setLayout(all_clients_layout)
@@ -280,23 +244,20 @@ class ServerGUI(QMainWindow):
         self.all_clients_table.setColumnCount(5)
         self.all_clients_table.setHorizontalHeaderLabels(["ID", "Username", "Registered At", "Last Seen", "Total Queries"])
         
-        # --- Set selection behavior --- 
-        self.all_clients_table.setSelectionBehavior(QTableWidget.SelectRows) # Select whole rows
-        self.all_clients_table.setSelectionMode(QTableWidget.SingleSelection) # Allow only one row selection
-        self.all_clients_table.setAlternatingRowColors(True) # Improve readability
-        self.all_clients_table.verticalHeader().setVisible(False) # Hide row numbers
-        self.all_clients_table.setEditTriggers(QTableWidget.NoEditTriggers) # Make table read-only
-        # -----------------------------
+        self.all_clients_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.all_clients_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.all_clients_table.setAlternatingRowColors(True)
+        self.all_clients_table.verticalHeader().setVisible(False)
+        self.all_clients_table.setEditTriggers(QTableWidget.NoEditTriggers)
         
         self.all_clients_table.itemSelectionChanged.connect(self.on_all_client_selected)
         all_clients_layout.addWidget(self.all_clients_table)
         splitter.addWidget(all_clients_group)
 
-        # Client Details View
         details_group = QGroupBox("Client Details")
-        details_layout = QVBoxLayout() # Or QFormLayout
+        details_layout = QVBoxLayout()
         details_group.setLayout(details_layout)
-        self.client_details_area = QTextEdit() # Placeholder for details
+        self.client_details_area = QTextEdit()
         self.client_details_area.setReadOnly(True)
         details_layout.addWidget(self.client_details_area)
         splitter.addWidget(details_group)
@@ -312,32 +273,22 @@ class ServerGUI(QMainWindow):
         stats_layout = QFormLayout() # Use form layout for key-value pairs
         stats_group.setLayout(stats_layout)
 
-        # --- Add Stat Labels (Placeholders) ---
         self.uptime_label = QLabel("Calculating...")
         self.registered_clients_label = QLabel("0")
         self.total_queries_label = QLabel("0")
-        # Add more labels for specific query types as needed
+
 
         stats_layout.addRow("Server Uptime:", self.uptime_label)
         stats_layout.addRow("Total Registered Clients:", self.registered_clients_label)
         stats_layout.addRow("Total Queries Processed:", self.total_queries_label)
-        # Add rows for query types here...
-        # Example: self.query_type1_label = QLabel("0"); stats_layout.addRow("Query Type 1:", self.query_type1_label)
-
-        # --- REMOVE OLD/UNNECESSARY STATS WIDGETS ---
-        # Delete or comment out the creation/adding of old widgets like total connections if they existed here before.
-        # self.total_connections_label = QLabel("0") # Example of old label to remove
-        # layout.removeWidget(self.total_connections_label) # If added directly to layout before
-        # self.total_connections_label.deleteLater()        # Clean up the widget
 
         layout.addWidget(stats_group)
-        layout.addStretch() # Push stats to the top
+        layout.addStretch()
         tab.setLayout(layout)
 
-        # --- Add Plot Area --- 
         self.stats_plot_group = QGroupBox("Daily Query Trends")
         plot_layout = QVBoxLayout(self.stats_plot_group)
-        plot_layout.setContentsMargins(2, 5, 2, 2) # Minimal margins
+        plot_layout.setContentsMargins(2, 5, 2, 2)
 
         # Create an initial empty figure
         initial_fig = Figure(figsize=(8, 4), dpi=100)
@@ -345,14 +296,15 @@ class ServerGUI(QMainWindow):
         # Add the canvas to the plot layout
         plot_layout.addWidget(self.stats_canvas)
 
-        # Add the plot group to the main tab layout
         layout.addWidget(self.stats_plot_group)
-        # Adjust stretch factor if needed, e.g., give plot more space
         layout.setStretchFactor(stats_group, 1)
         layout.setStretchFactor(self.stats_plot_group, 3) 
 
     def start_server(self):
-        """Creates a Server instance and starts it in a separate thread."""
+        """Creates a Server instance and starts it in a separate thread.
+        Handles input validation for host/port, saves these settings,
+        registers server event callbacks, and updates the UI to reflect the running state.
+        """
         # Prevent starting if already running (or if server object exists)
         if self.server_running:
             QMessageBox.warning(self, "Warning", "Server is already running.")
@@ -362,96 +314,82 @@ class ServerGUI(QMainWindow):
         port_str = self.port_input.text().strip()
 
         if not host:
-             QMessageBox.warning(self, "Error", "Host cannot be empty.")
-             return
+            QMessageBox.warning(self, "Error", "Host cannot be empty.")
+            return
 
         try:
             port = int(port_str)
-            if not (1 <= port <= 65535):
+            if not (1024 <= port <= 65535):
                 raise ValueError("Port out of range")
         except ValueError:
-            QMessageBox.warning(self, "Error", "Invalid Port number. Must be between 1 and 65535.")
+            QMessageBox.warning(self, "Error", "Invalid Port number. Must be between 1024 and 65535.")
             return
 
-        # Save the settings
         self.settings.setValue("server_host", host)
         self.settings.setValue("server_port", port)
 
-        # --- Create and Start Server ---
         try:
-            # Create the Server instance with host and port
             self.server = Server(host=host, port=port)
 
-            # Register server callbacks NOW that self.server exists
             self.server.on_activity_log = (
                 lambda timestamp, message: self.activity_log_signal.emit(timestamp, message)
             )
             self.server.on_client_list_update = (
                 lambda: self.client_list_update_signal.emit()
             )
-            # Add the new callback registration
             self.server.on_all_clients_update = (
                 lambda: self.all_clients_list_update_signal.emit()
             )
-
-            # Start the server (no args needed for start())
             self.server.start()
 
             self.status_bar.showMessage(f"Server started on {host}:{port}")
-            self.server_running = True # Update state flag
+            self.server_running = True
             self.start_button.setEnabled(False)
             self.stop_button.setEnabled(True)
-            self.host_input.setEnabled(False) # Disable input when running
-            self.port_input.setEnabled(False) # Disable input when running
+            self.host_input.setEnabled(False)
+            self.port_input.setEnabled(False)
 
-            # Perform initial load of all clients now that server is running
             self.update_all_clients()
 
         except Exception as e:
-            # Clean up the partially created server object if start fails
             self.server = None
-            self.server_running = False # Ensure state is false
+            self.server_running = False
             QMessageBox.critical(self, "Server Start Error", f"Failed to create or start server: {e}")
             self.status_bar.showMessage("Server failed to start.")
-            # Ensure buttons are in correct state if start fails
             self.start_button.setEnabled(True)
             self.stop_button.setEnabled(False)
             self.host_input.setEnabled(True)
             self.port_input.setEnabled(True)
     
     def stop_server(self):
-        """Stops the server gracefully."""
+        """Stops the server gracefully, updates the UI to a stopped state,
+        and clears any server-related data from the GUI (client lists, details).
+        """
         # Check if we think the server is running (based on GUI state)
         if self.server_running:
             logger.info("Attempting to stop server...")
             if self.server.stop(): # stop() should return True/False
                  self.status_bar.showMessage("Server stopped.")
             else:
-                # Stop failed - Maybe don't destroy self.server instance?
-                # Keep UI disabled as server might be in weird state
                 self.status_bar.showMessage("Failed to stop server gracefully.")
                 QMessageBox.warning(self, "Stop Error", "Server did not stop cleanly. Check logs.")
 
-            # Regardless of stop success/failure, reset GUI state to STOPPED
             logger.info("Resetting GUI state to stopped.")
-            self.server = None # Destroy the server instance reference in GUI
-            self.server_running = False # Update state flag
+            self.server = None
+            self.server_running = False
             self.start_button.setEnabled(True)
             self.stop_button.setEnabled(False)
-            self.host_input.setEnabled(True) # Re-enable input
-            self.port_input.setEnabled(True) # Re-enable input
+            self.host_input.setEnabled(True)
+            self.port_input.setEnabled(True)
 
-            # Clear client lists after stopping
             self.active_clients_tree.clear()
             self.all_clients_table.clear()
             self.client_details_area.clear()
 
-            # Update statistics to reflect stopped state
-            self.update_statistics() # Ensure stats are updated after stopping
+            self.update_statistics()
 
         elif not self.server_running:
              QMessageBox.information(self, "Info", "Server is not running.")
-             # Ensure UI is in the stopped state
              self.start_button.setEnabled(True)
              self.stop_button.setEnabled(False)
              self.host_input.setEnabled(True)
@@ -470,46 +408,33 @@ class ServerGUI(QMainWindow):
             QMessageBox.warning(self, "Message", "Please enter a message to broadcast!")
     
     def send_client_message(self):
-        """Send message to selected client"""
-        # Use the stored client ID from the last selection event
+        """Sends a direct message from the input field to the currently selected client."""
         client_id = getattr(self, 'selected_active_client_id', None)
         if client_id is None:
              QMessageBox.warning(self, "Error", "No client selected or client ID missing.")
              return
 
-        # Get message text
         message_text = self.client_message_input.text()
         if not message_text:
-            # Show error message if message is empty
             QMessageBox.warning(self, "Error", "Message cannot be empty")
             return
-
-        # Send message to client using the stored client ID
         logger.info(f"Attempting to send message to client ID: {client_id}")
         success = self.server.send_message_to_client(client_id, message_text)
 
         if success:
-            # Clear message entry
             self.client_message_input.clear()
-
-            # Show success message
-            # Placeholder text now updated in on_client_selected
             self.status_bar.showMessage(f"Message sent to Client {client_id}", 3000)
-            # Clear selection after sending
             self.active_clients_tree.clearSelection()
-            # Optionally disable send button again
             self.send_client_button.setEnabled(False)
             self.client_message_input.setPlaceholderText("Select a client first")
-
-            # Clear the stored ID after sending
             self.selected_active_client_id = None
         else:
-            # Show error message
             QMessageBox.warning(self, "Error", "Failed to send message to client")
     
     def on_activity_log(self, timestamp, message):
-        """Handle server activity log updates"""
-        # Format the timestamp
+        """Handles incoming activity log messages from the server, formats them,
+        and appends them to the activity log display area.
+        """
         try:
             dt = datetime.datetime.fromisoformat(timestamp)
             formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -518,28 +443,24 @@ class ServerGUI(QMainWindow):
         
         log_entry = f"[{formatted_time}] {message}"
         
-        # Update the log text
         self.activity_log.append(log_entry)
-        # Scroll to the bottom
         scrollbar = self.activity_log.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
     
     def update_client_list(self):
-        """Update the client list"""
-        # Update active clients only if server exists
+        """Callback function to trigger an update of the active clients list display."""
         if self.server:
             self.update_active_clients()
         else:
-            self.active_clients_tree.clear() # Clear tree if server not running
+            self.active_clients_tree.clear()
     
     def update_active_clients(self):
-        """Update the active clients tree"""
-        # Ensure server object exists before proceeding
+        """Updates the tree widget displaying actively connected clients.
+        It attempts to preserve the selection if the previously selected client is still active.
+        """
         if not self.server:
             logger.warning("update_active_clients called but self.server is None.")
             self.active_clients_tree.clear()
-            # Maybe update related labels to 'N/A' or '0'
-            # self.registered_clients_label.setText("0") # Example
             return
 
         # 1) Remember selected client ID (or address as fallback)
@@ -555,10 +476,9 @@ class ServerGUI(QMainWindow):
         item_to_restore = None
         
         for client in active_clients:
-            # Get data fields
-            client_id = client.get("id") # Actual Client ID from database
-            address = client.get("address", "Unknown") # IP:Port string
-            nickname = client.get("nickname", "N/A") # Get nickname
+            client_id = client.get("id")
+            address = client.get("address", "Unknown")
+            nickname = client.get("nickname", "N/A")
             connected_at = format_timestamp(client.get("connected_since"))
 
             # Create tree item with correct columns
@@ -567,8 +487,6 @@ class ServerGUI(QMainWindow):
             item.setData(0, Qt.UserRole, client_id)
             self.active_clients_tree.addTopLevelItem(item)
 
-            # 3) If this row matches what was selected before, remember it
-            # Compare with stored ID or address
             current_identifier = client_id or address # Use ID if available, else address
             if current_identifier == prev_selected_id:
                 item_to_restore = item
@@ -584,7 +502,10 @@ class ServerGUI(QMainWindow):
             self.on_client_selected(item_to_restore)
     
     def update_all_clients(self):
-        """Update the 'All Clients' table in the Client Management tab."""
+        """Updates the table widget displaying all registered clients.
+        It fetches the latest client data from the server and refreshes the table,
+        attempting to preserve the selection if the previously selected client still exists.
+        """
         logger.info("Updating 'All Clients' table...")
         try:
             # --- Remember selection --- 
@@ -592,7 +513,7 @@ class ServerGUI(QMainWindow):
             current_selection = self.all_clients_table.selectedItems()
             if current_selection:
                 selected_row = self.all_clients_table.row(current_selection[0])
-                id_item = self.all_clients_table.item(selected_row, 0) # Assuming ID is column 0
+                id_item = self.all_clients_table.item(selected_row, 0) # ID is column 0
                 if id_item:
                     try:
                         selected_client_id = int(id_item.text())
@@ -638,11 +559,8 @@ class ServerGUI(QMainWindow):
                 self.all_clients_table.blockSignals(True)
                 self.all_clients_table.selectRow(row_to_reselect)
                 self.all_clients_table.blockSignals(False)
-            # else:
-            #      # Optionally clear details if no row was reselected (or if previous selection invalid)
-            #      # self.client_details_area.clear()
-            #      pass
-            # --------------------------------------------------------------
+            else:
+                self.client_details_area.clear()
             
             logger.info(f"'All Clients' table updated with {len(all_clients)} clients.")
         except AttributeError as ae:
@@ -654,7 +572,9 @@ class ServerGUI(QMainWindow):
             logger.error(f"Error updating 'All Clients' table: {e}", exc_info=True)
 
     def on_client_selected(self, item=None):
-        """Handle client selection in the active clients tree. Store selected ID."""
+        """Handles the selection of a client in the active clients tree.
+        Updates the UI to enable sending direct messages and sets the placeholder text.
+        """
         self.selected_active_client_id = None # Clear previous selection
         selected_items = self.active_clients_tree.selectedItems()
         if selected_items:
@@ -679,7 +599,10 @@ class ServerGUI(QMainWindow):
             self.client_message_input.setPlaceholderText("Select a client first")
     
     def on_all_client_selected(self):
-        """Handle selection change in the 'All Clients' table."""
+        """Handles selection change in the 'All Clients' table.
+        Fetches and displays detailed information (basic info, query stats, session history)
+        for the selected client in the details view area.
+        """
         selected_items = self.all_clients_table.selectedItems()
         if selected_items:
             selected_item = selected_items[0]
@@ -725,8 +648,7 @@ class ServerGUI(QMainWindow):
             self.currently_displayed_client_id = None # Clear tracked ID
 
     def format_client_details(self, details):
-        """Helper function to format client details dictionary into a string."""
-        # Example implementation - adjust based on actual data returned by server
+        """Helper function to format a client's detailed information dictionary into a displayable string."""
         if not details:
             return "No details available."
 
@@ -743,7 +665,6 @@ class ServerGUI(QMainWindow):
             # Sort stats by query_type (e.g., 'query1', 'query2')
             query_stats.sort(key=lambda x: x.get('query_type', ''))
             for stat in query_stats:
-                # Correct indentation inside loop
                 text += f"- {stat.get('query_type', 'Unknown')}: {stat.get('count', 0)} times\n"
         else:
             text += "No query statistics available.\n"
@@ -751,7 +672,7 @@ class ServerGUI(QMainWindow):
         text += f"\n--- Session History (Last 5) ---\n"
         session_history = details.get('session_history', [])
         if session_history:
-            for session in session_history[:5]: # Limit to last 5 for brevity
+            for session in session_history[:5]: # 5 is genoeg I guess?
                 start = format_timestamp(session.get('start_time'))
                 end = format_timestamp(session.get('end_time'), default='Active')
                 duration_s = session.get('duration_seconds')
@@ -763,7 +684,9 @@ class ServerGUI(QMainWindow):
         return text
     
     def schedule_updates(self):
-        """Schedule updates for dynamic components"""
+        """Periodically called by a QTimer to update dynamic GUI components like
+        the active client list and server statistics.
+        """
         
         if self.server_running and self.server:
             self.update_active_clients()
@@ -775,7 +698,9 @@ class ServerGUI(QMainWindow):
             self.update_statistics()
     
     def closeEvent(self, event):
-        """Handle window close event"""
+        """Handles the window close event. Prompts the user to stop the server
+        if it is currently running before closing the application.
+        """
         if self.server_running:
             reply = QMessageBox.question(
                 self, "Quit", 
@@ -793,7 +718,10 @@ class ServerGUI(QMainWindow):
             event.accept()
 
     def update_statistics(self):
-        """Update statistics labels (safe to call when server is None)."""
+        """Updates the statistics labels (uptime, client counts, query counts)
+        and refreshes the daily query trends plot. This method is safe to call
+        even when the server is None or not running, in which case it displays a stopped state.
+        """
         if not self.server_running or not self.server:
             # Server stopped or not initialized - Set labels to stopped state
             self.uptime_label.setText("Stopped")
@@ -801,9 +729,13 @@ class ServerGUI(QMainWindow):
             self.total_queries_label.setText("N/A")
             # TODO: Reset other specific query stats labels here if they exist
             logger.debug("update_statistics: Server stopped, resetting labels.")
+            self.stats_canvas.figure.clf()
+            ax = self.stats_canvas.figure.subplots()
+            ax.text(0.5, 0.5, "Server Stopped", ha='center', va='center')
+            ax.set_xticks([])
+            ax.set_yticks([])
+            self.stats_canvas.draw()
             return
-
-        # --- Server is running --- 
 
         # Calculate Uptime
         try:
@@ -825,7 +757,7 @@ class ServerGUI(QMainWindow):
             logger.warning("Could not calculate uptime.")
             self.uptime_label.setText("Error") # Indicate error calculating uptime
 
-        # Get Total Registered Clients (Assuming this is from DB, needs server method)
+        # Get Total Registered Clients from db
         try:
             all_clients = self.server.get_all_clients() # This method accesses DB
             self.registered_clients_label.setText(str(len(all_clients)))
