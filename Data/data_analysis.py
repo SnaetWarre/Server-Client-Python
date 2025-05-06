@@ -100,7 +100,7 @@ print("\nAge statistics before cleaning:")
 print(df_clean['Age'].describe())
 
 # Fix age outliers (e.g., assume valid age range is 10-100)
-df_clean = df_clean[(df_clean['Age'] >= 10) & (df_clean['Age'] <= 100)]
+df_clean = df_clean[(df_clean['Age'] >= 0) & (df_clean['Age'] <= 100)]
 print("\nAge statistics after cleaning:")
 print(df_clean['Age'].describe())
 
@@ -124,15 +124,23 @@ for col in categorical_cols:
             df_clean = pd.concat([df_clean, dummies], axis=1)
             print(f"Created {len(dummies.columns)} dummy variables for {col}")
 
-# Create a more general location feature using LAT and LON
+# Create a standardized GeoJSON feature for each location
 if 'LAT' in df_clean.columns and 'LON' in df_clean.columns:
-    # Round coordinates to group nearby locations
-    df_clean['Location_Cluster'] = df_clean.apply(
-        lambda row: f"{round(row['LAT'], 2)}_{round(row['LON'], 2)}" 
-        if pd.notnull(row['LAT']) and pd.notnull(row['LON']) else "Unknown", 
+    # Create GeoJSON Point features
+    df_clean['Location_GeoJSON'] = df_clean.apply(
+        lambda row: {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [float(row['LON']), float(row['LAT'])]
+            },
+            "properties": {
+                "cluster_id": f"{round(row['LAT'], 2)}_{round(row['LON'], 2)}"
+            }
+        } if pd.notnull(row['LAT']) and pd.notnull(row['LON']) else None,
         axis=1
     )
-    print(f"Created Location_Cluster feature with {df_clean['Location_Cluster'].nunique()} unique areas")
+    print(f"Created GeoJSON features for {df_clean['Location_GeoJSON'].notna().sum()} locations")
 
 # Step 5: Data Visualization
 # ------------------------------------------------------------
