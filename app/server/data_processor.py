@@ -1,36 +1,25 @@
 #!/usr/bin/env python3
 # Data processor for server-side queries
-
-# --- Force Matplotlib backend BEFORE importing pyplot or seaborn ---
 import matplotlib
-matplotlib.use('Agg') # Use the Agg backend for non-interactive plotting in threads
-# -------------------------------------------------------------
-
+matplotlib.use('Agg')
 import os
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt # No longer needed for Query 4 plot
-import seaborn as sns # No longer needed for Query 4 plot
-import io
-from matplotlib.figure import Figure # No longer needed
+import matplotlib.pyplot as plt
+import seaborn as sns
 import folium
 from folium.plugins import MarkerCluster
 import logging
+import uuid
+import tempfile 
+import json # for the geojson parsing
+from shared.constants import DESCENT_CODE_MAP, ARREST_TYPE_CODE_MAP
 from datetime import datetime
-import urllib.request # No longer needed for OSM background
-from math import log, tan, pi, cos, sinh, atan
-import uuid # For unique filenames
-import tempfile # <-- ADD IMPORT
-import json # <-- ADD IMPORT FOR GEOJSON PARSING
 
-# Set the style for visualizations
-plt.style.use('seaborn-v0_8-darkgrid') # Keep for other plots
-sns.set_palette('viridis') # Keep for other plots
+plt.style.use('seaborn-v0_8-darkgrid')
+sns.set_palette('viridis')
 
 logger = logging.getLogger('data_processor')
-
-# Import the mapping
-from shared.constants import DESCENT_CODE_MAP, ARREST_TYPE_CODE_MAP
 
 class DataProcessor:
     """Data processor for handling queries on the dataset"""
@@ -58,7 +47,6 @@ class DataProcessor:
             # Ensure 'Arrest Date' is datetime
             if 'Arrest Date' in self.df.columns:
                 self.df['Arrest Date'] = pd.to_datetime(self.df['Arrest Date'], errors='coerce')
-                # Drop rows where Arrest Date couldn't be parsed if necessary
                 self.df.dropna(subset=['Arrest Date'], inplace=True)
 
             # --- Try to parse Location_GeoJSON if it exists ---
@@ -151,7 +139,6 @@ class DataProcessor:
     
     def get_top_charge_groups(self, parameters):
         """Get top charge groups by frequency"""
-        # Get number of top groups to return (default 10)
         n = parameters.get('n', 10)
         n = int(n)
         
@@ -174,7 +161,6 @@ class DataProcessor:
     
     def get_arrests_by_area(self, parameters):
         """Get arrests by geographic area"""
-        # Get number of top areas to return (default 15)
         n = parameters.get('n', 15)
         n = int(n)
         
@@ -221,21 +207,17 @@ class DataProcessor:
     
     def get_arrests_by_month(self, parameters):
         """Get arrests by month"""
-        # Get year filter if provided
         year = parameters.get('year', None)
         
-        # Filter by year if specified
         if year:
             year = int(year)
             df_filtered = self.df[self.df['Arrest Year'] == year]
         else:
             df_filtered = self.df
         
-        # Check if month column exists
         if 'Arrest Month' not in df_filtered.columns:
             return {'status': 'error', 'message': 'Arrest Month column not found in dataset'}
         
-        # Create table result
         month_counts = df_filtered['Arrest Month'].value_counts().sort_index().reset_index()
         month_counts.columns = ['Month', 'Count']
         
@@ -266,7 +248,6 @@ class DataProcessor:
     
     def get_charge_types_by_area(self, parameters):
         """Get charge types by area"""
-        # Get number of top areas and charges to include
         n_areas = int(parameters.get('n_areas', 5))
         n_charges = int(parameters.get('n_charges', 5))
         
@@ -307,7 +288,6 @@ class DataProcessor:
     
     def get_arrests_by_gender(self, parameters):
         """Get arrests by gender"""
-        # Get gender parameter if provided
         selected_gender = parameters.get('gender')
         
         # Filter out invalid gender codes and map to full names
@@ -387,22 +367,17 @@ class DataProcessor:
     
     def get_arrests_by_age_range(self, parameters):
         """Get arrests by age range"""
-        # Check if min_age and max_age parameters are provided
         min_age = parameters.get('min_age')
         max_age = parameters.get('max_age')
         
         if min_age is not None and max_age is not None:
-            # Use the specific min_age and max_age parameters from the client
             min_age = int(min_age)
             max_age = int(max_age)
             
-            # Create a custom age range
             custom_range = [(min_age, max_age)]
             
-            # Filter dataframe by this specific age range
             filtered_df = self.df[(self.df['Age'] >= min_age) & (self.df['Age'] <= max_age)]
             
-            # Create histogram of ages within the specified range
             fig, ax = plt.subplots(figsize=(12, 6))
             sns.histplot(filtered_df['Age'], bins=min(30, max_age - min_age + 1), kde=True, ax=ax)
             ax.set_title(f'Age Distribution between {min_age} and {max_age}')
@@ -453,7 +428,6 @@ class DataProcessor:
     
     def get_arrests_by_weekday(self, parameters):
         """Get arrests by day of week"""
-        # Check if the weekday column exists
         if 'Arrest Weekday' not in self.df.columns:
             return {'status': 'error', 'message': 'Arrest Weekday column not found in dataset'}
         
@@ -549,7 +523,6 @@ class DataProcessor:
         ax.set_title('Correlation Analysis')
         plt.tight_layout()
         
-        # Create a reset index version of the correlation matrix for the data
         correlation_reset = correlation_matrix.reset_index()
         correlation_reset = correlation_reset.rename(columns={'index': 'Feature'})
         
@@ -577,7 +550,7 @@ class DataProcessor:
         if self.df.empty: return []
         try:
             groups = self.df['Charge Group Description'].dropna().unique().tolist()
-            return sorted([g for g in groups if isinstance(g, str)]) # Filter out non-strings if any
+            return sorted([g for g in groups if isinstance(g, str)])
         except KeyError:
              logger.warning("Column 'Charge Group Description' not found for get_unique_charge_groups.")
              return []
@@ -628,17 +601,14 @@ class DataProcessor:
         if self.df.empty: return []
         try:
             unique_codes = self.df['Arrest Type Code'].dropna().unique().tolist()
-            # Filter out non-strings and sort the codes
             valid_codes = sorted([c for c in unique_codes if isinstance(c, str)])
 
-            # Create list of dictionaries with descriptions
             arrest_type_list = []
             for code in valid_codes:
                 description = ARREST_TYPE_CODE_MAP.get(code, f"Unknown Code ({code})") # Fallback
                 arrest_type_list.append({'code': code, 'description': description})
 
-            # Sort the final list by description
-            arrest_type_list.sort(key=lambda item: item['description'])
+            arrest_type_list.sort(key=lambda item: item['description']) # Sort the final list by description
             return arrest_type_list
         except KeyError:
              logger.warning("Column 'Arrest Type Code' not found for get_unique_arrest_type_codes.")
@@ -859,38 +829,6 @@ class DataProcessor:
             logger.error(f"Error processing Query 3: {e}", exc_info=True)
             return {'status': 'error', 'message': f"Error processing query: {e}"}
 
-    def _calculate_center(self, area_name):
-        """Helper to calculate the central lat/lon for an area using median."""
-        if 'Area Name' not in self.df.columns or 'LAT' not in self.df.columns or 'LON' not in self.df.columns:
-            logger.warning(f"Cannot calculate center for '{area_name}': Missing required columns.")
-            return None, None
-
-        # --- Ensure coordinates are numeric and filter out invalid/zero coordinates ---
-        # (Assuming 0,0 or similar might be placeholders for missing data)
-        area_data = self.df[
-            (self.df['Area Name'] == area_name) &
-            pd.to_numeric(self.df['LAT'], errors='coerce').notna() &
-            pd.to_numeric(self.df['LON'], errors='coerce').notna() &
-            (pd.to_numeric(self.df['LAT'], errors='coerce') != 0) &
-            (pd.to_numeric(self.df['LON'], errors='coerce') != 0)
-        ].copy() # Create a copy to safely convert types
-
-        if area_data.empty:
-            logger.warning(f"No valid, non-zero coordinate data found for area '{area_name}'.")
-            return None, None
-
-        # Convert to numeric just for calculation (if not already)
-        area_data['LAT'] = pd.to_numeric(area_data['LAT'])
-        area_data['LON'] = pd.to_numeric(area_data['LON'])
-
-        # --- Calculate MEDIAN latitude and longitude ---
-        center_lat = area_data['LAT'].median()
-        center_lon = area_data['LON'].median()
-        # -------------------------------------------
-
-        logger.info(f"Calculated MEDIAN center for '{area_name}': Lat={center_lat}, Lon={center_lon}")
-        return center_lat, center_lon
-
     def _haversine(self, lat1, lon1, lat2, lon2):
         """Calculate the great-circle distance between two points on the earth."""
         # Convert decimal degrees to radians
@@ -923,10 +861,8 @@ class DataProcessor:
             end_date = pd.to_datetime(params['end_date']).replace(hour=23, minute=59, second=59)
             arrest_type_code = params.get('arrest_type_code')
 
-            # --- Filter Data --- 
             df_working = self.df.copy() # Work with a copy
 
-            # --- Extract LAT/LON, prioritizing parsed GeoJSON ---
             has_geojson_col = 'Location_GeoJSON_Parsed' in df_working.columns
 
             if has_geojson_col:
@@ -975,12 +911,10 @@ class DataProcessor:
                 df_filtered['distance_km'] = distances[distances <= radius_km]
                 logger.info(f"Query 4: Found {len(df_filtered)} points within radius.")
 
-                # --- Generate Folium Map with Marker Clustering --- 
                 if not df_filtered.empty:
                     try:
                         m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
 
-                        # Add Center Marker (directly to map)
                         folium.Marker(
                             [center_lat, center_lon],
                             popup=f"Center ({center_lat:.4f}, {center_lon:.4f})",
@@ -988,9 +922,7 @@ class DataProcessor:
                             icon=folium.Icon(color='red', icon='info-sign')
                         ).add_to(m)
 
-                        # --- Create Marker Cluster --- 
                         marker_cluster = MarkerCluster().add_to(m)
-                        # ----------------------------
 
                         df_to_plot = df_filtered # Plot all points
 
@@ -999,12 +931,10 @@ class DataProcessor:
                             popup_text += f"<b>Date:</b> {row.get('Arrest Date', pd.NaT).strftime('%Y-%m-%d') if pd.notna(row.get('Arrest Date')) else 'N/A'}<br>"
                             popup_text += f"<b>Address:</b> {row.get('Address', 'N/A')}<br>"
                             popup_text += f"<b>Charge:</b> {row.get('Charge Group Description', 'N/A')}<br>"
-                            # Use extracted coordinates for popup as well
                             popup_text += f"<b>Coords:</b> ({row['extracted_LAT']:.4f}, {row['extracted_LON']:.4f})"
                             
-                            # --- Add marker TO THE CLUSTER --- 
                             folium.CircleMarker(
-                                location=[row['extracted_LAT'], row['extracted_LON']], # Use extracted coords
+                                location=[row['extracted_LAT'], row['extracted_LON']],
                                 radius=5,
                                 popup=folium.Popup(popup_text, max_width=300),
                                 tooltip=f"Arrest {row.get('Report ID', '')}",
@@ -1013,16 +943,11 @@ class DataProcessor:
                                 fill_color='#3186cc',
                                 fill_opacity=0.7
                             ).add_to(marker_cluster) # <<< Add to cluster, not map `m`
-                            # --------------------------------
 
-                        # --- Save map to a unique temporary file in SYSTEM temp dir ---
                         map_basename = f"map-{uuid.uuid4()}.html"
-                        # Get the system temporary directory
                         system_temp_dir = tempfile.gettempdir()
-                        # Get the absolute path within the system temp dir
                         map_filepath_abs = os.path.abspath(os.path.join(system_temp_dir, map_basename))
                         m.save(map_filepath_abs)
-                        # -----------------------------------------------------------
                         
                         logger.info(f"Query 4: Folium map with {len(df_to_plot)} markers saved to {map_filepath_abs}.")
 
@@ -1053,11 +978,8 @@ class DataProcessor:
             data = result_df.to_dict(orient='records')
             headers = output_cols
 
-            # --- ADD LOGGING BEFORE RETURN ---
             logger.info(f"PROCESSOR_QUERY4: Returning map_filepath: {map_filepath_abs}")
-            # ----------------------------------
 
-            # Return data AND map FILEPATH
             return {'status': 'OK', 'data': data, 'headers': headers, 'map_filepath': map_filepath_abs, 'title': final_title}
 
         except KeyError as ke:
@@ -1066,5 +988,3 @@ class DataProcessor:
         except Exception as e:
             logger.error(f"Error processing Query 4: {e}", exc_info=True)
             return {'status': 'error', 'message': f"Error processing query: {e}"}
-
-    # Add other methods if needed (e.g., for loading data, preprocessing) 

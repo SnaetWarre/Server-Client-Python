@@ -28,8 +28,8 @@ SERVER_LOG_FILE = os.path.join(TEMP_DIR, 'server_temp.log')
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename=SERVER_LOG_FILE, # <-- Log to file
-    filemode='w'              # <-- Overwrite file each time
+    filename=SERVER_LOG_FILE,
+    filemode='w'
     # handlers=[ ... ] # <-- Remove console handler
 )
 logger = logging.getLogger('server')
@@ -45,10 +45,10 @@ class Server:
         self.port = port
         self.socket = None
         self.running = False
-        self.clients = []  # List of active client handlers
-        self.clients_lock = threading.Lock() # ADDED Lock for clients list
+        self.clients = []
+        self.clients_lock = threading.Lock() # Lock for clients list
         self.db = Database()
-        self.data_processor = DataProcessor() # Path to the processed data
+        self.data_processor = DataProcessor()
         
         # Activity log for the server (for the GUI)
         self.activity_log = []
@@ -74,20 +74,17 @@ class Server:
                 return False
 
         try:
-            # Create socket
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.socket.bind((self.host, self.port))
             self.socket.listen(5)
             
             self.running = True
-            # Record server start time
             self.start_time = time.time()
             
             logger.info(f"Server started on {self.host}:{self.port}")
             self.log_activity(f"Server started on {self.host}:{self.port}")
             
-            # Start accepting clients
             accept_thread = threading.Thread(target=self.accept_clients)
             accept_thread.daemon = True
             accept_thread.start()
@@ -162,7 +159,7 @@ class Server:
             
         logger.info("Server stopped")
         self.log_activity("Server stopped")
-        return True # Indicate successful stop
+        return True
     
     def accept_clients(self):
         """Accept incoming client connections"""
@@ -175,10 +172,8 @@ class Server:
                 # Set socket options for better reliability
                 client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
                 
-                # Log new connection attempt
                 logger.info(f"Accepted connection from {client_address}")
                 
-                # Create and start a new client handler
                 handler = ClientHandler(client_socket, client_address, self)
                 handler.daemon = True
                 handler.start()
@@ -255,7 +250,6 @@ class Server:
     
     def broadcast_message(self, message_text):
         """Broadcast a message to all connected clients"""
-        # Create message first
         message = Message(MSG_SERVER_MESSAGE, {
             'timestamp': datetime.now().isoformat(),
             'message': message_text
@@ -397,5 +391,5 @@ if __name__ == "__main__":
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        print("\nStopping server...")
+        print("\\nStopping server...")
         server.stop() 

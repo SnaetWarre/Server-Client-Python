@@ -12,10 +12,6 @@ import contextlib
 import json
 
 logger = logging.getLogger(__name__)
-
-# Print SQLite thread safety level on import
-print(f"SQLite3 thread safety level: {sqlite3.threadsafety}")
-
 class Database:
     """Thread-safe database using a connection pool for storing client info and query history"""
     
@@ -435,7 +431,6 @@ class Database:
                     return None # Return None if client doesn't exist
                 details = dict(zip([col[0] for col in cursor.description], client_row))
 
-                # Get last login time from sessions table
                 cursor.execute("SELECT MAX(start_time) FROM sessions WHERE client_id = ?", (client_id,))
                 last_login_result = cursor.fetchone()
                 details['last_login'] = last_login_result[0] if last_login_result else None
@@ -496,11 +491,10 @@ class Database:
                 cursor = conn.cursor()
                 cursor.execute(query)
                 results = cursor.fetchall()
-                # Convert rows to dicts
                 return [dict(zip([col[0] for col in cursor.description], row)) for row in results]
         except sqlite3.Error as sql_err:
             logger.error(f"Database error fetching daily query counts: {sql_err}", exc_info=True)
-            return [] # Return empty list on error
+            return []
         except Exception as e:
             logger.error(f"Unexpected error fetching daily query counts: {e}", exc_info=True)
             return [] 

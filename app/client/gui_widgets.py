@@ -247,12 +247,9 @@ class QueryWidget(QWidget):
         self.q2_charge_combo.addItems(["Loading charge types..."])
         self.q2_granularity_combo = QComboBox()
         self.q2_granularity_combo.addItems(["Daily", "Weekly", "Monthly", "Yearly"])
-        # self.q2_area_input = QLineEdit() # <-- REMOVED
-        # self.q2_area_input.setPlaceholderText("Optional: Enter areas separated by commas") # <-- REMOVED
 
         layout.addRow("Arrestatietype:", self.q2_charge_combo)
         layout.addRow("Tijdsgranulariteit:", self.q2_granularity_combo)
-        # layout.addRow("Gebied(en) (optioneel):", self.q2_area_input) # <-- REMOVED
         return widget
 
     def _create_query3_params(self):
