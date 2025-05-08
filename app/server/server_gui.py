@@ -155,7 +155,7 @@ class ServerGUI(QMainWindow):
 
         host_port_layout = QFormLayout()
         self.host_input = QLineEdit(self.settings.value("server_host", "127.0.0.1"))
-        self.port_input = QLineEdit(self.settings.value("server_port", "8888"))
+        self.port_input = QLineEdit(self.settings.value("server_port", defaultValue="8888", type=str))
         self.port_input.setValidator(QIntValidator(1024, 65535)) # Basic port validation
         host_port_layout.addRow("Host:", self.host_input)
         host_port_layout.addRow("Port:", self.port_input)
